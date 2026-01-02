@@ -1,0 +1,12 @@
+[project]
+name = "qtip"
+version = "0.1.0"
+description = "ASGI application wrapper"
+readme = "README.md"
+authors = [{ name = "Robert Myers", email = "robert@julython.org" }]
+requires-python = ">=3.10"
+dependencies = []
+
+[build-system]
+requires = ["uv_build>=0.9.16,<0.10.0"]
+build-backend = "uv_build"
