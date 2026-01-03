@@ -100,6 +100,7 @@ class Application:
         self._registry = svcs.Registry()
         self._on_startup: list[Callable[[svcs.Registry], AsyncIterator[None]]] = []
         self._extra_middleware: list[Middleware] = []
+        self._exception_handlers: dict[Any, Any] = {}
         self._routers: list[tuple[Any, str]] = []  # (router, prefix)
 
     def register_factory(
@@ -148,19 +149,20 @@ class Application:
         settings = self.settings
         startup_hooks = self._on_startup
 
-        @svcs.fastapi.lifespan
         @asynccontextmanager
-        async def lifespan(
-            app: FastAPI, registry: svcs.Registry
-        ) -> AsyncIterator[dict[str, Any]]:
-            # Run custom startup hooks
+        async def lifespan(app: FastAPI) -> AsyncIterator[dict[str, Any]]:
+            # Run custom startup hooks (they register services on the registry)
             cleanup_stack = []
             for hook in startup_hooks:
                 gen = hook(registry)
                 await gen.__anext__()
                 cleanup_stack.append(gen)
 
-            yield {"settings": settings}
+            # Yield state with registry for svcs middleware
+            yield {
+                "svcs_registry": registry,
+                "settings": settings,
+            }
 
             # Cleanup in reverse order
             for gen in reversed(cleanup_stack):
@@ -168,6 +170,9 @@ class Application:
                     await gen.__anext__()
                 except StopAsyncIteration:
                     pass
+
+            # Close the registry
+            await registry.aclose()
 
         return lifespan
 
@@ -211,7 +216,7 @@ class Application:
 
 async def aget(request: Request, *svc_types: type) -> Any:
     """Get services from the request's svcs container."""
-    return await svcs.fastapi.aget(request, *svc_types)
+    return await svcs.fastapi.aget(request, *svc_types)  # type: ignore
 
 
 def get(request: Request, *svc_types: type) -> Any:
