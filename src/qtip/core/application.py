@@ -1,41 +1,31 @@
 """
-Core application factory and base classes.
+Core application factory built on svcs.
 """
 
 from __future__ import annotations
 
 import logging
 import tomllib
-from contextlib import asynccontextmanager, AbstractAsyncContextManager
+from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    AsyncIterator,
-    TypeVar,
-    Protocol,
-    runtime_checkable,
-)
+from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, TypeVar
 
+import svcs
 from fastapi import FastAPI, Request
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from starlette.middleware import Middleware
+from starlette_context import plugins
+from starlette_context.middleware import RawContextMiddleware
 
 if TYPE_CHECKING:
-    from starlette.middleware import Middleware
+    from collections.abc import Sequence
+    from starlette.routing import BaseRoute
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
-
 DEFAULT_TOOL_NAME = "qtip"
-
-
-@runtime_checkable
-class SettingsProtocol(Protocol):
-    """Protocol for settings objects. Any object with attribute access works."""
-
-    def __getattr__(self, name: str) -> Any: ...
 
 
 def load_pyproject_config(
@@ -58,7 +48,7 @@ def load_pyproject_config(
 
 class Settings(BaseSettings):
     """
-    Optional pydantic-settings base class that loads from:
+    Base settings that loads from:
     1. pyproject.toml [tool.qtip] (lowest priority)
     2. .env file
     3. Environment variables (highest priority)
@@ -73,11 +63,7 @@ class Settings(BaseSettings):
     app_name: str = "app"
     app_module: str = "app.main:app"
     debug: bool = False
-
-    # Built-in extension toggles
-    logging_enabled: bool = True
-    exception_handler_enabled: bool = True
-    health_enabled: bool = True
+    log_level: str = "INFO"
 
     @model_validator(mode="before")
     @classmethod
@@ -86,173 +72,164 @@ class Settings(BaseSettings):
         return {**pyproject_config, **data}
 
 
-class Extension:
+class Application:
     """
-    Base class for extensions that hook into app lifecycle.
-
-    Extensions can be passed as classes or instances to wrap_app().
-    If passed as a class, it will be instantiated with settings.
-    """
-
-    name: str = "extension"
-    settings_keys: list[str] = []
-
-    def __init__(self, settings: SettingsProtocol) -> None:
-        self.settings = settings
-
-    def get_setting(self, key: str, default: Any = None) -> Any:
-        """Get a setting value, with optional default."""
-        return getattr(self.settings, key, default)
-
-    def require_setting(self, key: str) -> Any:
-        """Get a setting value, raising if not present."""
-        try:
-            value = getattr(self.settings, key)
-            if value is None:
-                raise AttributeError
-            return value
-        except AttributeError:
-            raise ValueError(
-                f"Extension '{self.name}' requires setting '{key}'. "
-                f"Add '{key}' to your settings."
-            ) from None
-
-    async def startup(self, app: FastAPI) -> None:
-        """Called during app startup."""
-        pass
-
-    async def shutdown(self, app: FastAPI) -> None:
-        """Called during app shutdown."""
-        pass
-
-    def middleware(self) -> list[Middleware]:
-        """Return middleware to add to the app."""
-        return []
-
-
-def wrap_app(
-    app: FastAPI,
-    settings: SettingsProtocol,
-    extensions: list[type[Extension] | Extension] | None = None,
-) -> FastAPI:
-    """
-    Wrap a FastAPI application with qtip extensions.
-
-    Built-in extensions (logging, exceptions, health) are always included
-    unless disabled via settings. User extensions are added after.
+    Application factory that wires FastAPI with svcs.
 
     Usage:
-        from fastapi import FastAPI
-        from qtip import wrap_app, Settings
-        from qtip.ext.database import DatabaseExtension
-        from qtip.ext.redis import RedisExtension
+        settings = MySettings()
+        app = Application(settings)
 
-        app = FastAPI(title="My App")
+        # Register services with svcs
+        app.register_factory(Database, create_database)
+        app.register_factory(Redis, create_redis)
 
-        @app.get("/hello")
-        def hello():
-            return {"message": "world"}
-
-        settings = Settings()
-        app = wrap_app(app, settings, [
-            DatabaseExtension,  # Just pass the class
-            RedisExtension,
-        ])
-
-    Settings to disable built-ins:
-        logging_enabled: bool = True
-        exception_handler_enabled: bool = True
-        health_enabled: bool = True
+        fastapi_app = app.build()
     """
-    from qtip.middleware.logging import LoggingExtension
-    from qtip.core.execptions import ExceptionExtension
-    from qtip.ext.health import HealthExtension
 
-    # Build extension instances
-    all_extensions: list[Extension] = []
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        title: str | None = None,
+        version: str = "0.1.0",
+        routes: Sequence[BaseRoute] | None = None,
+    ) -> None:
+        self.settings = settings
+        self.title = title or settings.app_name
+        self.version = version
+        self.routes = list(routes) if routes else []
+        self._registry = svcs.Registry()
+        self._on_startup: list[Callable[[svcs.Registry], AsyncIterator[None]]] = []
+        self._extra_middleware: list[Middleware] = []
+        self._routers: list[tuple[Any, str]] = []  # (router, prefix)
 
-    # 1. Logging first (sets up request IDs for everything else)
-    if getattr(settings, "logging_enabled", True):
-        all_extensions.append(LoggingExtension(settings))
+    def register_factory(
+        self,
+        svc_type: type[T],
+        factory: Callable[..., T] | Callable[..., AsyncIterator[T]],
+        *,
+        ping: Callable[..., None] | None = None,
+    ) -> None:
+        """
+        Register a service factory with svcs.
 
-    # 2. Exception handler (catches errors from all subsequent middleware)
-    if getattr(settings, "exception_handler_enabled", True):
-        all_extensions.append(ExceptionExtension(settings))
+        The factory can be sync/async and can be a context manager for cleanup.
+        """
+        self._registry.register_factory(svc_type, factory, ping=ping)
 
-    # 3. User extensions (database, redis, etc.)
-    for ext in extensions or []:
-        if isinstance(ext, type):
-            all_extensions.append(ext(settings))
-        else:
-            all_extensions.append(ext)
+    def register_value(self, svc_type: type[T], value: T) -> None:
+        """Register a concrete value."""
+        self._registry.register_value(svc_type, value)
 
-    # 4. Health checks last (can check all infrastructure)
-    if getattr(settings, "health_enabled", True):
-        version = getattr(settings, "app_version", app.version)
-        all_extensions.append(HealthExtension(settings, version=version))
+    def add_middleware(self, middleware: Middleware) -> None:
+        """Add custom middleware."""
+        self._extra_middleware.append(middleware)
 
-    # Collect middleware from all extensions
-    middleware_stack: list[Middleware] = []
-    for ext in all_extensions:
-        middleware_stack.extend(ext.middleware())
+    def include_router(self, router: Any, *, prefix: str = "") -> None:
+        """Add a router to be included when the app is built."""
+        self._routers.append((router, prefix))
 
-    # Build combined lifespan
-    original_lifespan = app.router.lifespan_context
+    def on_startup(
+        self, func: Callable[[svcs.Registry], AsyncIterator[None]]
+    ) -> Callable[[svcs.Registry], AsyncIterator[None]]:
+        """
+        Decorator to register startup/shutdown logic.
 
-    @asynccontextmanager
-    async def combined_lifespan(app: FastAPI) -> AsyncIterator[None]:
-        app.state.settings = settings
-        app.state._extensions = all_extensions
-
-        for ext in all_extensions:
-            logger.info(f"Starting extension: {ext.name}")
-            await ext.startup(app)
-
-        if original_lifespan is not None:
-            async with original_lifespan(app):
-                yield
-        else:
+        @app.on_startup
+        async def setup_something(registry: svcs.Registry):
+            # startup code
             yield
+            # shutdown code
+        """
+        self._on_startup.append(func)
+        return func
 
-        for ext in reversed(all_extensions):
-            logger.info(f"Stopping extension: {ext.name}")
-            await ext.shutdown(app)
+    def _build_lifespan(self):
+        registry = self._registry
+        settings = self.settings
+        startup_hooks = self._on_startup
 
-    # Create wrapped app
-    wrapped = FastAPI(
-        title=app.title,
-        description=app.description,
-        version=app.version,
-        openapi_url=app.openapi_url,
-        docs_url=app.docs_url,
-        redoc_url=app.redoc_url,
-        debug=app.debug,
-        lifespan=combined_lifespan,
-        middleware=middleware_stack,
-    )
+        @svcs.fastapi.lifespan
+        @asynccontextmanager
+        async def lifespan(
+            app: FastAPI, registry: svcs.Registry
+        ) -> AsyncIterator[dict[str, Any]]:
+            # Run custom startup hooks
+            cleanup_stack = []
+            for hook in startup_hooks:
+                gen = hook(registry)
+                await gen.__anext__()
+                cleanup_stack.append(gen)
 
-    # Copy routes, exception handlers, event handlers
-    for route in app.routes:
-        wrapped.router.routes.append(route)
+            yield {"settings": settings}
 
-    for exc_class, handler in app.exception_handlers.items():
-        wrapped.add_exception_handler(exc_class, handler)
+            # Cleanup in reverse order
+            for gen in reversed(cleanup_stack):
+                try:
+                    await gen.__anext__()
+                except StopAsyncIteration:
+                    pass
 
-    return wrapped
+        return lifespan
+
+    def _collect_middleware(self) -> list[Middleware]:
+        middleware = [
+            # starlette-context for request IDs, correlation IDs
+            Middleware(
+                RawContextMiddleware,
+                plugins=(
+                    plugins.RequestIdPlugin(),
+                    plugins.CorrelationIdPlugin(),
+                ),
+            ),
+            # svcs container middleware
+            Middleware(svcs.starlette.SVCSMiddleware),
+        ]
+        middleware.extend(self._extra_middleware)
+        return middleware
+
+    def build(self) -> FastAPI:
+        """Build and return the configured FastAPI application."""
+        app = FastAPI(
+            title=self.title,
+            version=self.version,
+            debug=self.settings.debug,
+            lifespan=self._build_lifespan(),
+            middleware=self._collect_middleware(),
+            routes=self.routes or None,
+        )
+
+        # Include registered routers
+        for router, prefix in self._routers:
+            app.include_router(router, prefix=prefix)
+
+        # Register exception handlers if configured
+        if hasattr(self, "_exception_handlers"):
+            for exc_class, handler in self._exception_handlers.items():
+                app.add_exception_handler(exc_class, handler)
+
+        # Store references
+        app.state.settings = self.settings
+        app.state._application = self
+
+        return app
 
 
-# Typed accessors
-def get_state(request: Request, key: str, expected_type: type[T]) -> T:
-    """Get a value from request.state with type checking."""
-    value = getattr(request.state, key)
-    if not isinstance(value, expected_type):
-        raise TypeError(f"Expected {expected_type}, got {type(value)}")
-    return value
+# === Typed accessors using svcs ===
 
 
-def get_app_state(request: Request, key: str, expected_type: type[T]) -> T:
-    """Get a value from app.state with type checking."""
-    value = getattr(request.app.state, key)
-    if not isinstance(value, expected_type):
-        raise TypeError(f"Expected {expected_type}, got {type(value)}")
-    return value
+async def aget(request: Request, *svc_types: type) -> Any:
+    """Get services from the request's svcs container."""
+    return await svcs.fastapi.aget(request, *svc_types)
+
+
+def get(request: Request, *svc_types: type) -> Any:
+    """Get sync services from the request's svcs container."""
+    container = svcs.starlette.svcs_from(request)
+    return container.get(*svc_types)
+
+
+def get_settings(request: Request) -> Settings:
+    """Get settings from request state."""
+    return request.state.settings

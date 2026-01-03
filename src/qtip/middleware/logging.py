@@ -1,82 +1,81 @@
 """
-Request logging middleware with context propagation.
-
-Optional settings:
-    log_level: str = "INFO"
-    log_format: str = "%(asctime)s [%(request_id)s] %(levelname)s %(name)s: %(message)s"
+Logging configuration using starlette-context for request IDs.
 """
 
 from __future__ import annotations
 
 import logging
 import time
-from contextvars import ContextVar
 from typing import Any
-from uuid import uuid4
 
-from fastapi import FastAPI, Request
+from fastapi import Request
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
+from starlette_context import context
+from starlette_context.header_keys import HeaderKeys
 
-from qtip.core.application import Extension, SettingsProtocol
-
-# Context variable for request ID - accessible anywhere in async context
-request_id_ctx: ContextVar[str | None] = ContextVar("request_id", default=None)
+from qtip.core.application import Application, Settings
 
 logger = logging.getLogger(__name__)
 
 
+class LoggingSettings(Settings):
+    """Settings for logging configuration."""
+
+    log_level: str = "INFO"
+    log_format: str = "%(asctime)s [%(request_id)s] %(levelname)s %(name)s: %(message)s"
+    log_requests: bool = True
+
+
 class RequestContextFilter(logging.Filter):
-    """Logging filter that injects request_id into log records."""
+    """Logging filter that injects request_id from starlette-context."""
 
     def filter(self, record: logging.LogRecord) -> bool:
-        record.request_id = request_id_ctx.get() or "-"
+        try:
+            record.request_id = context.get(HeaderKeys.request_id, "-")
+        except Exception:
+            record.request_id = "-"
         return True
 
 
-class LoggingExtension(Extension):
+def configure_logging(app: Application, settings: LoggingSettings) -> None:
     """
-    Logging extension with request context.
+    Configure logging with request context.
 
-    Auto-included by wrap_app() unless logging_enabled=False.
+    Uses starlette-context (already added by Application) for request IDs.
+    Adds request/response logging middleware if enabled.
 
-    Settings:
-        log_level: str = "INFO"
-        log_format: str = "%(asctime)s [%(request_id)s] ..."
+    Usage:
+        from qtip.middleware.logging import configure_logging, LoggingSettings
 
-    Adds to request.state:
-        - request_id: str
+        configure_logging(app, settings)
     """
 
-    name = "logging"
-    settings_keys = ["log_level", "log_format"]
+    # Configure root logger
+    logging.basicConfig(
+        level=settings.log_level,
+        format=settings.log_format,
+    )
 
-    DEFAULT_FORMAT = "%(asctime)s [%(request_id)s] %(levelname)s %(name)s: %(message)s"
+    # Add context filter to root logger
+    root_logger = logging.getLogger()
+    root_logger.addFilter(RequestContextFilter())
 
-    async def startup(self, app: FastAPI) -> None:
-        log_level = self.get_setting("log_level", "INFO")
-        log_format = self.get_setting("log_format", self.DEFAULT_FORMAT)
-
-        logging.basicConfig(level=log_level, format=log_format)
-
-        root_logger = logging.getLogger()
-        root_logger.addFilter(RequestContextFilter())
-
-    def middleware(self) -> list[Middleware]:
-        return [Middleware(RequestLoggingMiddleware)]
+    # Add request logging middleware if enabled
+    if settings.log_requests:
+        app.add_middleware(Middleware(RequestLoggingMiddleware))
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
-    """Middleware that logs requests and sets request ID."""
+    """Middleware that logs requests and responses."""
 
     async def dispatch(self, request: Request, call_next) -> Response:
-        request_id = request.headers.get("X-Request-ID", str(uuid4())[:8])
-
-        request_id_ctx.set(request_id)
-        request.state.request_id = request_id
-
         start_time = time.perf_counter()
+
+        # Get request ID from starlette-context
+        request_id = context.get(HeaderKeys.request_id, "-")
+
         logger.info(f"{request.method} {request.url.path} started")
 
         try:
@@ -88,6 +87,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 f"completed {response.status_code} in {duration_ms:.1f}ms"
             )
 
+            # Add request ID to response headers
             response.headers["X-Request-ID"] = request_id
             return response
 
@@ -98,16 +98,22 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 f"failed after {duration_ms:.1f}ms: {e}"
             )
             raise
-        finally:
-            request_id_ctx.set(None)
 
 
-# Accessors
-def get_request_id(request: Request) -> str:
-    """Get the current request ID."""
-    return request.state.request_id
+# === Convenience functions ===
 
 
-def current_request_id() -> str | None:
-    """Get request ID from context (works anywhere in async context)."""
-    return request_id_ctx.get()
+def get_request_id() -> str:
+    """Get current request ID from context."""
+    try:
+        return context.get(HeaderKeys.request_id, "-")
+    except Exception:
+        return "-"
+
+
+def get_correlation_id() -> str:
+    """Get current correlation ID from context."""
+    try:
+        return context.get(HeaderKeys.correlation_id, "-")
+    except Exception:
+        return "-"

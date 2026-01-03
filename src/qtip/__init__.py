@@ -16,11 +16,11 @@ Example:
 """
 
 from qtip.core.application import (
-    Extension,
+    Application,
     Settings,
-    SettingsProtocol,
-    get_state,
-    get_app_state,
+    aget,
+    get,
+    get_settings,
 )
 from qtip.core.execptions import (
     AppException,
@@ -34,16 +34,18 @@ from qtip.core.execptions import (
     DatabaseError,
     RedisError,
     ExternalServiceError,
+    configure_exceptions,
+    ExceptionSettings,
 )
 
 __version__ = "0.1.0"
 __all__ = [
     # Core
-    "Extension",
+    "Application",
     "Settings",
-    "SettingsProtocol",
-    "get_state",
-    "get_app_state",
+    "aget",
+    "get",
+    "get_settings",
     # Exceptions
     "AppException",
     "BadRequest",
@@ -56,4 +58,6 @@ __all__ = [
     "DatabaseError",
     "RedisError",
     "ExternalServiceError",
+    "configure_exceptions",
+    "ExceptionSettings",
 ]

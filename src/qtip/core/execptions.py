@@ -9,8 +9,10 @@ from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from starlette_context import context
+from starlette_context.header_keys import HeaderKeys
 
-from qtip.core.application import Extension
+from qtip.core.application import Application, Settings
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +48,7 @@ class AppException(Exception):
 
     def to_response(self) -> dict[str, Any]:
         """Convert to API response body."""
-        response: dict[str, dict[str, Any]] = {
+        response: dict[str, Any] = {
             "error": {
                 "code": self.error_code,
                 "message": self.message,
@@ -127,43 +129,44 @@ class ExternalServiceError(AppException):
     message = "External service request failed"
 
 
-# === Exception Handler Extension ===
+# === Exception Handler Middleware ===
 
 
-class ExceptionExtension(Extension):
+class ExceptionSettings(Settings):
+    """Settings for exception handling."""
+
+    debug_errors: bool = False
+    log_server_errors: bool = True
+
+
+def configure_exceptions(app: Application, settings: ExceptionSettings) -> None:
     """
-    Extension that adds consistent exception handling.
-
-    Settings:
-        debug_errors: bool = False  - Include stack traces in responses
-        log_server_errors: bool = True - Log tracebacks for 5xx
+    Configure exception handling on the application.
 
     Catches AppException subclasses and converts to JSON responses.
     Catches unexpected exceptions and returns generic 500s.
+
+    Usage:
+        from qtip.core.exceptions import configure_exceptions, ExceptionSettings
+
+        configure_exceptions(app, settings)
     """
 
-    name = "exceptions"
-    settings_keys = ["debug_errors", "log_server_errors"]
-
-    async def startup(self, app: FastAPI) -> None:
-        app.add_exception_handler(AppException, self._handle_app_exception)  # type: ignore[arg-type]
-        app.add_exception_handler(Exception, self._handle_unexpected_exception)
-
-    async def _handle_app_exception(
-        self, request: Request, exc: AppException
-    ) -> JSONResponse:
+    async def handle_app_exception(request: Request, exc: AppException) -> JSONResponse:
         """Handle known application exceptions."""
-        log_server_errors = self.get_setting("log_server_errors", True)
 
-        if exc.status_code >= 500 and log_server_errors:
+        if exc.status_code >= 500 and settings.log_server_errors:
             logger.exception(f"Server error: {exc.error_code}", exc_info=exc)
         else:
             logger.warning(f"Client error: {exc.error_code} - {exc.message}")
 
         response = exc.to_response()
 
-        if hasattr(request.state, "request_id"):
-            response["error"]["request_id"] = request.state.request_id
+        # Add request_id from starlette-context
+        try:
+            response["error"]["request_id"] = context.get(HeaderKeys.request_id, "-")
+        except Exception:
+            pass
 
         headers = {}
         if isinstance(exc, RateLimited) and exc.retry_after:
@@ -175,10 +178,11 @@ class ExceptionExtension(Extension):
             headers=headers,
         )
 
-    async def _handle_unexpected_exception(
-        self, request: Request, exc: Exception
+    async def handle_unexpected_exception(
+        request: Request, exc: Exception
     ) -> JSONResponse:
         """Handle unexpected exceptions."""
+
         logger.exception("Unexpected error", exc_info=exc)
 
         response: dict[str, Any] = {
@@ -188,14 +192,21 @@ class ExceptionExtension(Extension):
             }
         }
 
-        if hasattr(request.state, "request_id"):
-            response["error"]["request_id"] = request.state.request_id
+        try:
+            response["error"]["request_id"] = context.get(HeaderKeys.request_id, "-")
+        except Exception:
+            pass
 
-        debug_errors = self.get_setting("debug_errors", False)
-        if debug_errors:
+        if settings.debug_errors:
             response["error"]["details"] = {
                 "exception": type(exc).__name__,
                 "message": str(exc),
             }
 
         return JSONResponse(status_code=500, content=response)
+
+    # Store handlers to be registered when app is built
+    app._exception_handlers = {  # type: ignore
+        AppException: handle_app_exception,
+        Exception: handle_unexpected_exception,
+    }

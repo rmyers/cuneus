@@ -1,5 +1,5 @@
 [project]
-name = "qtip"
+name = "asgi-qtip"
 version = "0.1.0"
 description = "ASGI application wrapper"
 readme = "README.md"
@@ -12,18 +12,22 @@ dependencies = [
     "pydantic-settings>=2.0",
     "click>=8.0",
     "uvicorn[standard]>=0.27.0",
+    # Core dependencies we build on
+    "svcs>=24.1.0",
+    "starlette-context>=0.3.6",
 ]
 
 [project.optional-dependencies]
 database = ["sqlalchemy[asyncio]>=2.0", "asyncpg>=0.29.0", "alembic>=1.13.0"]
 redis = ["redis>=5.0"]
-all = ["qtip[database,redis]"]
+all = ["asgi-qtip[database,redis]"]
 dev = [
-    "qtip[all]",
+    "asgi-qtip[all]",
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "pytest-cov>=4.0",
     "httpx>=0.27",
+    "asgi-lifespan>=2.1.0",
     "ruff>=0.3",
     "mypy>=1.8",
 ]
