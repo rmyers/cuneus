@@ -15,8 +15,6 @@ from fastapi import FastAPI, Request
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from starlette.middleware import Middleware
-from starlette_context import plugins
-from starlette_context.middleware import RawContextMiddleware
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -175,14 +173,6 @@ class Application:
 
     def _collect_middleware(self) -> list[Middleware]:
         middleware = [
-            # starlette-context for request IDs, correlation IDs
-            Middleware(
-                RawContextMiddleware,
-                plugins=(
-                    plugins.RequestIdPlugin(),
-                    plugins.CorrelationIdPlugin(),
-                ),
-            ),
             # svcs container middleware
             Middleware(svcs.starlette.SVCSMiddleware),
         ]

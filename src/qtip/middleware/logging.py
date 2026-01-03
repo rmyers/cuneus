@@ -1,66 +1,73 @@
 """
-Logging configuration using starlette-context for request IDs.
+Structured logging with structlog and request context.
 """
 
 from __future__ import annotations
 
-import logging
 import time
+import uuid
 from typing import Any
 
-from fastapi import Request
-from starlette.middleware import Middleware
+import structlog
+from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import Response
-from starlette_context import context
-from starlette_context.header_keys import HeaderKeys
+from starlette.middleware import Middleware
 
 from qtip.core.application import Application, Settings
-
-logger = logging.getLogger(__name__)
 
 
 class LoggingSettings(Settings):
     """Settings for logging configuration."""
 
     log_level: str = "INFO"
-    log_format: str = "%(asctime)s [%(request_id)s] %(levelname)s %(name)s: %(message)s"
+    log_json: bool = False  # Set True for production
     log_requests: bool = True
-
-
-class RequestContextFilter(logging.Filter):
-    """Logging filter that injects request_id from starlette-context."""
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        try:
-            record.request_id = context.get(HeaderKeys.request_id, "-")
-        except Exception:
-            record.request_id = "-"
-        return True
 
 
 def configure_logging(app: Application, settings: LoggingSettings) -> None:
     """
-    Configure logging with request context.
+    Configure structured logging with structlog.
 
-    Uses starlette-context (already added by Application) for request IDs.
-    Adds request/response logging middleware if enabled.
+    Uses structlog.contextvars for request-scoped context (request_id, etc).
 
     Usage:
-        from qtip.middleware.logging import configure_logging, LoggingSettings
+        from qtip.middleware.logging import configure_logging, LoggingSettings, get_logger
 
         configure_logging(app, settings)
+
+        # In your code:
+        log = get_logger()
+        log.info("something happened", user_id=123)
     """
 
-    # Configure root logger
-    logging.basicConfig(
-        level=settings.log_level,
-        format=settings.log_format,
-    )
+    # Shared processors for all output
+    shared_processors: list[structlog.types.Processor] = [
+        structlog.contextvars.merge_contextvars,
+        structlog.processors.add_log_level,
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.stdlib.ExtraAdder(),
+    ]
 
-    # Add context filter to root logger
-    root_logger = logging.getLogger()
-    root_logger.addFilter(RequestContextFilter())
+    if settings.log_json:
+        # JSON output for production
+        processors = shared_processors + [
+            structlog.processors.JSONRenderer(),
+        ]
+    else:
+        # Pretty console output for development
+        processors = shared_processors + [
+            structlog.dev.ConsoleRenderer(colors=True),
+        ]
+
+    structlog.configure(
+        processors=processors,
+        wrapper_class=structlog.make_filtering_bound_logger(
+            structlog.stdlib._NAME_TO_LEVEL[settings.log_level.lower()]
+        ),
+        context_class=dict,
+        logger_factory=structlog.PrintLoggerFactory(),
+        cache_logger_on_first_use=True,
+    )
 
     # Add request logging middleware if enabled
     if settings.log_requests:
@@ -68,23 +75,42 @@ def configure_logging(app: Application, settings: LoggingSettings) -> None:
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
-    """Middleware that logs requests and responses."""
+    """
+    Middleware that:
+    - Generates request_id
+    - Binds it to structlog context
+    - Logs request start/end
+    - Adds request_id to response headers
+    """
 
     async def dispatch(self, request: Request, call_next) -> Response:
+        # Generate or extract request ID
+        request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())[:8]
+
+        # Clear any previous context and bind request info
+        structlog.contextvars.clear_contextvars()
+        structlog.contextvars.bind_contextvars(
+            request_id=request_id,
+            method=request.method,
+            path=request.url.path,
+        )
+
+        # Also store on request.state for access in routes
+        request.state.request_id = request_id
+
+        log = structlog.get_logger()
         start_time = time.perf_counter()
 
-        # Get request ID from starlette-context
-        request_id = context.get(HeaderKeys.request_id, "-")
-
-        logger.info(f"{request.method} {request.url.path} started")
+        log.info("request_started")
 
         try:
             response = await call_next(request)
 
             duration_ms = (time.perf_counter() - start_time) * 1000
-            logger.info(
-                f"{request.method} {request.url.path} "
-                f"completed {response.status_code} in {duration_ms:.1f}ms"
+            log.info(
+                "request_completed",
+                status_code=response.status_code,
+                duration_ms=round(duration_ms, 2),
             )
 
             # Add request ID to response headers
@@ -93,27 +119,50 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
         except Exception as e:
             duration_ms = (time.perf_counter() - start_time) * 1000
-            logger.exception(
-                f"{request.method} {request.url.path} "
-                f"failed after {duration_ms:.1f}ms: {e}"
+            log.exception(
+                "request_failed",
+                duration_ms=round(duration_ms, 2),
+                error=str(e),
             )
             raise
+        finally:
+            structlog.contextvars.clear_contextvars()
 
 
-# === Convenience functions ===
+# === Public API ===
 
 
-def get_request_id() -> str:
-    """Get current request ID from context."""
-    try:
-        return context.get(HeaderKeys.request_id, "-")
-    except Exception:
-        return "-"
+def get_logger(**initial_context: Any) -> structlog.stdlib.BoundLogger:
+    """
+    Get a logger with optional initial context.
+
+    Usage:
+        log = get_logger()
+        log.info("user logged in", user_id=123)
+
+        # Or with initial context
+        log = get_logger(service="payment")
+        log.info("charge created", amount=100)
+    """
+    log = structlog.get_logger()
+    if initial_context:
+        log = log.bind(**initial_context)
+    return log
 
 
-def get_correlation_id() -> str:
-    """Get current correlation ID from context."""
-    try:
-        return context.get(HeaderKeys.correlation_id, "-")
-    except Exception:
-        return "-"
+def bind_contextvars(**context: Any) -> None:
+    """
+    Bind additional context that will appear in all subsequent logs.
+
+    Useful for adding user_id after authentication, etc.
+
+    Usage:
+        # In auth middleware or dependency
+        bind_contextvars(user_id=current_user.id, tenant="acme")
+    """
+    structlog.contextvars.bind_contextvars(**context)
+
+
+def get_request_id(request: Request) -> str:
+    """Get request ID from request state."""
+    return getattr(request.state, "request_id", "-")

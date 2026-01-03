@@ -1,6 +1,6 @@
 [project]
 name = "asgi-qtip"
-version = "0.1.0"
+version = "0.2.0"
 description = "ASGI application wrapper"
 readme = "README.md"
 authors = [{ name = "Robert Myers", email = "robert@julython.org" }]
@@ -14,7 +14,7 @@ dependencies = [
     "uvicorn[standard]>=0.27.0",
     # Core dependencies we build on
     "svcs>=24.1.0",
-    "starlette-context>=0.3.6",
+    "structlog>=24.1.0",
 ]
 
 [project.optional-dependencies]

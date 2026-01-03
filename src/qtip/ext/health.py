@@ -4,16 +4,16 @@ Health check endpoints using svcs ping capabilities.
 
 from __future__ import annotations
 
-import logging
 from enum import Enum
 
+import structlog
 import svcs
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
 from qtip.core.application import Application, Settings
 
-logger = logging.getLogger(__name__)
+log = structlog.get_logger()
 
 
 class HealthStatus(str, Enum):
@@ -84,7 +84,7 @@ def configure_health(
                     )
                 )
             except Exception as e:
-                logger.warning(f"Health check failed for {ping.name}: {e}")
+                log.warning("health_check_failed", service=ping.name, error=str(e))
                 services.append(
                     ServiceHealth(
                         name=ping.name,
@@ -116,7 +116,7 @@ def configure_health(
             try:
                 await ping.aping()
             except Exception as e:
-                logger.warning(f"Readiness check failed for {ping.name}: {e}")
+                log.warning("readiness_check_failed", service=ping.name, error=str(e))
                 raise HTTPException(status_code=503, detail=f"{ping.name} unhealthy")
 
         return {"status": "ok"}

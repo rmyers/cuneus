@@ -70,7 +70,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
-    { name = "starlette-context" },
+    { name = "structlog" },
     { name = "svcs" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -123,7 +123,7 @@ requires-dist = [
     { name = "redis", marker = "extra == 'redis'", specifier = ">=5.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.3" },
     { name = "sqlalchemy", extras = ["asyncio"], marker = "extra == 'database'", specifier = ">=2.0" },
-    { name = "starlette-context", specifier = ">=0.3.6" },
+    { name = "structlog", specifier = ">=24.1.0" },
     { name = "svcs", specifier = ">=24.1.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.27.0" },
 ]
@@ -1171,15 +1171,15 @@ wheels = [
 ]
 
 [[package]]
-name = "starlette-context"
-version = "0.4.0"
+name = "structlog"
+version = "25.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "starlette" },
+    { name = "typing-extensions", marker = "python_full_version < '3.11'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/50/a2/42e29208fea21d03e6487d3ae4b6f1a5bd21cf762b8b7eef95041e8c08ff/starlette_context-0.4.0.tar.gz", hash = "sha256:3242417c9354c067a4ac5009aff762dc0b322074216f664825d5d127108553be", size = 9131, upload-time = "2025-03-04T06:36:24.481Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ef/52/9ba0f43b686e7f3ddfeaa78ac3af750292662284b3661e91ad5494f21dbc/structlog-25.5.0.tar.gz", hash = "sha256:098522a3bebed9153d4570c6d0288abf80a031dfdb2048d59a49e9dc2190fc98", size = 1460830, upload-time = "2025-10-27T08:28:23.028Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/98/ec/90a4479bc3e307f3ff0b56165d70e1b01cf10882872823b27984bda375e2/starlette_context-0.4.0-py3-none-any.whl", hash = "sha256:dbcc11006587f901edd3d0a989a69a628fccf9d00c1ca3c28fab23ab88bd0093", size = 12273, upload-time = "2025-03-04T06:36:23.563Z" },
+    { url = "https://files.pythonhosted.org/packages/a8/45/a132b9074aa18e799b891b91ad72133c98d8042c70f6240e4c5f9dabee2f/structlog-25.5.0-py3-none-any.whl", hash = "sha256:a8453e9b9e636ec59bd9e79bbd4a72f025981b3ba0f5837aebf48f02f37a7f9f", size = 72510, upload-time = "2025-10-27T08:28:21.535Z" },
 ]
 
 [[package]]

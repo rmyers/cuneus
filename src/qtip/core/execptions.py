@@ -4,17 +4,15 @@ Exception handling with consistent API responses.
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
-from fastapi import FastAPI, Request
+import structlog
+from fastapi import Request
 from fastapi.responses import JSONResponse
-from starlette_context import context
-from starlette_context.header_keys import HeaderKeys
 
 from qtip.core.application import Application, Settings
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 
 # === Base Exceptions ===
@@ -156,17 +154,17 @@ def configure_exceptions(app: Application, settings: ExceptionSettings) -> None:
         """Handle known application exceptions."""
 
         if exc.status_code >= 500 and settings.log_server_errors:
-            logger.exception(f"Server error: {exc.error_code}", exc_info=exc)
+            logger.exception("server_error", error_code=exc.error_code, exc_info=exc)
         else:
-            logger.warning(f"Client error: {exc.error_code} - {exc.message}")
+            logger.warning(
+                "client_error", error_code=exc.error_code, message=exc.message
+            )
 
         response = exc.to_response()
 
-        # Add request_id from starlette-context
-        try:
-            response["error"]["request_id"] = context.get(HeaderKeys.request_id, "-")
-        except Exception:
-            pass
+        # Add request_id from request.state (set by logging middleware)
+        if hasattr(request.state, "request_id"):
+            response["error"]["request_id"] = request.state.request_id
 
         headers = {}
         if isinstance(exc, RateLimited) and exc.retry_after:
@@ -183,7 +181,7 @@ def configure_exceptions(app: Application, settings: ExceptionSettings) -> None:
     ) -> JSONResponse:
         """Handle unexpected exceptions."""
 
-        logger.exception("Unexpected error", exc_info=exc)
+        logger.exception("unexpected_error", exc_info=exc)
 
         response: dict[str, Any] = {
             "error": {
@@ -192,10 +190,8 @@ def configure_exceptions(app: Application, settings: ExceptionSettings) -> None:
             }
         }
 
-        try:
-            response["error"]["request_id"] = context.get(HeaderKeys.request_id, "-")
-        except Exception:
-            pass
+        if hasattr(request.state, "request_id"):
+            response["error"]["request_id"] = request.state.request_id
 
         if settings.debug_errors:
             response["error"]["details"] = {
