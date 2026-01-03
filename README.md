@@ -21,7 +21,7 @@ pip install asgi-qtip[all]
 
 ## Quick Start
 
-**pyproject.toml**
+Create a **pyproject.toml** file:
 
 ```toml
 [tool.qtip]
