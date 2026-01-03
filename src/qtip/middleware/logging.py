@@ -61,9 +61,7 @@ def configure_logging(app: Application, settings: LoggingSettings) -> None:
 
     structlog.configure(
         processors=processors,
-        wrapper_class=structlog.make_filtering_bound_logger(
-            structlog.stdlib._NAME_TO_LEVEL[settings.log_level.lower()]
-        ),
+        wrapper_class=structlog.make_filtering_bound_logger(settings.log_level),
         context_class=dict,
         logger_factory=structlog.PrintLoggerFactory(),
         cache_logger_on_first_use=True,
