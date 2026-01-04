@@ -1,210 +1,176 @@
-# qtip 🎤
+# cuneus
 
-A wrapper for FastAPI applications. Like the artist Q-Tip from A Tribe Called Quest.
+> _The wedge stone that locks the arch together_
 
-**qtip** is batteries-included infrastructure for FastAPI, built on [svcs](https://svcs.hynek.me/) for service lifecycle and [starlette-context](https://github.com/tomwojcik/starlette-context) for request context. It handles configuration, database sessions, Redis, health checks, retries, and CLI tools so you can focus on your app.
+**cuneus** is a lightweight lifespan manager for FastAPI applications. It provides a simple pattern for composing extensions that handle startup/shutdown and service registration.
+
+The name comes from Roman architecture: a _cuneus_ is the wedge-shaped stone in a Roman arch. Each stone is simple on its own, but together they lock under pressure to create structures that have stood for millennia—no rebar required.
 
 ## Installation
 
 ```bash
-pip install asgi-qtip
-
-# With database support (SQLAlchemy + asyncpg + Alembic)
-pip install asgi-qtip[database]
-
-# With Redis
-pip install asgi-qtip[redis]
-
-# Everything
-pip install asgi-qtip[all]
+pip install cuneus
 ```
 
 ## Quick Start
 
-Create a **pyproject.toml** file:
+```python
+# app.py
+from fastapi import FastAPI
+from cuneus import build_lifespan, Settings
+from cuneus.middleware.logging import LoggingMiddleware
 
-```toml
-[tool.qtip]
-app_name = "myapp"
-app_module = "myapp.main:app"
-database_url = "postgresql+asyncpg://localhost/myapp"
-redis_url = "redis://localhost:6379/0"
+from myapp.extensions import DatabaseExtension
+
+settings = Settings()
+lifespan = build_lifespan(
+    settings,
+    DatabaseExtension(settings),
+)
+
+app = FastAPI(lifespan=lifespan, title="My App", version="1.0.0")
+
+# Add middleware directly to FastAPI
+app.add_middleware(LoggingMiddleware)
 ```
 
-**myapp/main.py**
+That's it. Extensions handle their lifecycle, FastAPI handles the rest.
+
+## Creating Extensions
+
+Use `BaseExtension` for simple cases:
 
 ```python
-from qtip import Application, Settings
-from qtip.ext.database import configure_database, DatabaseSettings
-from qtip.ext.redis import configure_redis, RedisSettings
-from qtip.ext.health import configure_health
-
-class AppSettings(DatabaseSettings, RedisSettings):
-    pass
-
-settings = AppSettings()
-app = Application(settings, title="My App")
-
-configure_database(app, settings)
-configure_redis(app, settings)
-configure_health(app, settings, version="1.0.0")
-
-fastapi_app = app.build()
-```
-
-**Run it**
-
-```bash
-myapp run --reload
-myapp db upgrade
-myapp check
-```
-
-## Using Services
-
-qtip uses [svcs](https://svcs.hynek.me/) under the hood. Access services via annotated dependencies or directly:
-
-```python
-from fastapi import APIRouter, Request
-from sqlalchemy.ext.asyncio import AsyncSession
+from cuneus import BaseExtension
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncEngine
 import svcs
 
-from qtip import NotFound
-from qtip.ext.database import DBSession  # Annotated dependency
+class DatabaseExtension(BaseExtension):
+    def __init__(self, settings):
+        self.settings = settings
+        self.engine: AsyncEngine | None = None
 
-router = APIRouter()
+    async def startup(self, registry: svcs.Registry, app: FastAPI) -> dict[str, Any]:
+        self.engine = create_async_engine(self.settings.database_url)
 
-# Option 1: Annotated dependency (recommended)
-@router.get("/users/{id}")
-async def get_user(id: int, db: DBSession):
-    result = await db.execute(...)
-    if not (user := result.scalar_one_or_none()):
-        raise NotFound("User not found")
-    return user
+        # Register with svcs for dependency injection
+        registry.register_value(AsyncEngine, self.engine)
 
-# Option 2: Get multiple services at once
-@router.get("/dashboard")
-async def dashboard(request: Request):
-    db, redis = await svcs.fastapi.aget(request, AsyncSession, Redis)
-    # ...
+        # Add routes
+        app.include_router(health_router, prefix="/health")
+
+        # Add exception handlers
+        app.add_exception_handler(DBError, self.handle_db_error)
+
+        # Return state (accessible via request.state.db)
+        return {"db": self.engine}
+
+    async def shutdown(self, app: FastAPI) -> None:
+        if self.engine:
+            await self.engine.dispose()
 ```
 
-## Configuration
-
-Config loads from (highest priority first):
-
-1. **Environment variables**
-2. **.env file**
-3. **pyproject.toml `[tool.qtip]`**
-
-Commit defaults in pyproject.toml, override secrets via environment.
-
-## Health Checks
-
-Automatic Kubernetes-ready endpoints using svcs ping capabilities:
-
-```
-GET /health       → Full check with all registered services
-GET /health/live  → Liveness probe (always 200)
-GET /health/ready → Readiness probe (503 if unhealthy)
-```
-
-```json
-{
-  "status": "healthy",
-  "version": "1.0.0",
-  "services": [
-    { "name": "AsyncSession", "status": "healthy" },
-    { "name": "Redis", "status": "healthy" }
-  ]
-}
-```
-
-## Custom Services
-
-Register your own services with full lifecycle management:
+For full control, override `register()` directly:
 
 ```python
-from myapp.clients import GitHubClient
+from contextlib import asynccontextmanager
 
-@app.on_startup
-async def setup_github(registry):
-    client = GitHubClient(settings.github_token)
-    registry.register_value(GitHubClient, client, ping=client.ping)
-    yield
-    await client.close()
-```
+class RedisExtension(BaseExtension):
+    def __init__(self, settings):
+        self.settings = settings
 
-## Error Handling
+    @asynccontextmanager
+    async def register(self, registry: svcs.Registry, app: FastAPI):
+        redis = await aioredis.from_url(self.settings.redis_url)
+        registry.register_value(Redis, redis)
 
-Consistent JSON errors with request ID tracking:
-
-```python
-from qtip import NotFound, BadRequest, RateLimited
-
-raise NotFound("User not found", details={"user_id": 123})
-```
-
-```json
-{
-  "error": {
-    "code": "not_found",
-    "message": "User not found",
-    "request_id": "a1b2c3d4",
-    "details": { "user_id": 123 }
-  }
-}
-```
-
-## Retry
-
-Built-in retry with exponential backoff:
-
-```python
-from qtip import with_retry
-
-@with_retry(max_attempts=3, retry_on=(httpx.HTTPError,))
-async def fetch_data(url: str) -> dict:
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(url)
-        resp.raise_for_status()
-        return resp.json()
-```
-
-## CLI
-
-```bash
-myapp run --reload       # Dev server with auto-reload
-myapp run --workers 4    # Production with multiple workers
-myapp db upgrade         # Run migrations
-myapp db migrate -m "x"  # Create migration
-myapp check              # Verify config + test connectivity
-myapp config             # Show loaded configuration
-myapp shell              # Interactive REPL with app context
+        try:
+            yield {"redis": redis}
+        finally:
+            await redis.close()
 ```
 
 ## Testing
 
+The lifespan exposes a `.registry` attribute for test overrides:
+
 ```python
-import pytest
-from asgi_lifespan import LifespanManager
-from httpx import AsyncClient, ASGITransport
+# test_app.py
+from unittest.mock import Mock
+from starlette.testclient import TestClient
+from myapp import app, lifespan, Database
 
-@pytest.fixture
-async def client():
-    async with LifespanManager(app) as manager:
-        transport = ASGITransport(app=manager.app)
-        async with AsyncClient(transport=transport, base_url="http://test") as c:
-            yield c
+def test_db_error_handling():
+    with TestClient(app) as client:
+        # Override after app startup
+        mock_db = Mock(spec=Database)
+        mock_db.get_user.side_effect = Exception("boom")
+        lifespan.registry.register_value(Database, mock_db)
 
-async def test_health(client):
-    resp = await client.get("/health")
-    assert resp.json()["status"] == "healthy"
+        resp = client.get("/users/42")
+        assert resp.status_code == 500
 ```
 
-## Why "qtip"?
+## Settings
 
-Because it's a wrapper. Like the artist.
+cuneus includes a base `Settings` class that loads from multiple sources:
+
+```python
+from cuneus import Settings
+
+class AppSettings(Settings):
+    database_url: str = "sqlite+aiosqlite:///./app.db"
+    redis_url: str = "redis://localhost"
+
+    model_config = SettingsConfigDict(env_prefix="APP_")
+```
+
+Load priority (highest wins):
+
+1. Environment variables
+2. `.env` file
+3. `pyproject.toml` under `[tool.cuneus]`
+
+## API Reference
+
+### `build_lifespan(settings, *extensions)`
+
+Creates a lifespan context manager for FastAPI.
+
+- `settings`: Your settings instance (subclass of `Settings`)
+- `*extensions`: Extension instances to register
+
+Returns a lifespan with a `.registry` attribute for testing.
+
+### `BaseExtension`
+
+Base class with `startup()` and `shutdown()` hooks:
+
+- `startup(registry, app) -> dict[str, Any]`: Setup resources, return state
+- `shutdown(app) -> None`: Cleanup resources
+
+### `Extension` Protocol
+
+For full control, implement the protocol directly:
+
+```python
+def register(self, registry: svcs.Registry, app: FastAPI) -> AsyncContextManager[dict[str, Any]]
+```
+
+### Accessors
+
+- `aget(request, *types)` - Async get services from svcs
+- `get(request, *types)` - Sync get services from svcs
+- `get_settings(request)` - Get settings from request state
+- `get_request_id(request)` - Get request ID from request state
+
+## Why cuneus?
+
+- **Simple** — one function, `build_lifespan()`, does what you need
+- **No magic** — middleware added directly to FastAPI, not hidden
+- **Testable** — registry exposed via `lifespan.registry`
+- **Composable** — extensions are just async context managers
+- **Built on svcs** — proper dependency injection, not global state
 
 ## License
 

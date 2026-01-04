@@ -7,23 +7,33 @@ from __future__ import annotations
 from typing import Any
 
 import structlog
-from fastapi import Request
+import svcs
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
-from qtip.core.application import Application, Settings
+from cuneus.core.application import BaseExtension, Settings
 
-logger = structlog.get_logger()
+log = structlog.get_logger()
 
 
-# === Base Exceptions ===
+class ErrorDetails(BaseModel):
+    status: int
+    code: str
+    message: str
+    request_id: str | None = None
+    details: Any = None
+
+
+class ErrorResponse(BaseModel):
+    error: ErrorDetails
 
 
 class AppException(Exception):
     """
     Base exception for application errors.
 
-    Subclass this for domain-specific errors that should
-    return structured API responses.
+    Subclass this for domain-specific errors.
     """
 
     status_code: int = 500
@@ -44,17 +54,15 @@ class AppException(Exception):
         self.details = details or {}
         super().__init__(self.message)
 
-    def to_response(self) -> dict[str, Any]:
-        """Convert to API response body."""
-        response: dict[str, Any] = {
-            "error": {
-                "code": self.error_code,
-                "message": self.message,
-            }
-        }
-        if self.details:
-            response["error"]["details"] = self.details
-        return response
+    def to_response(self, request_id: str | None = None) -> ErrorResponse:
+        error_detail = ErrorDetails(
+            status=self.status_code,
+            code=self.error_code,
+            message=self.message,
+            request_id=request_id,
+            details=self.details,
+        )
+        return ErrorResponse(error=error_detail)
 
 
 # === Common HTTP Exceptions ===
@@ -127,44 +135,50 @@ class ExternalServiceError(AppException):
     message = "External service request failed"
 
 
-# === Exception Handler Middleware ===
+def error_responses(*excptions: AppException) -> dict[int, dict[str, Any]]:
+    responses: dict[int, dict[str, Any]] = {}
+    for exception in excptions:
+        responses[exception.status_code] = {
+            "model": ErrorResponse,
+            "description": exception.message,
+        }
+    return responses
 
 
-class ExceptionSettings(Settings):
-    """Settings for exception handling."""
-
-    debug_errors: bool = False
-    log_server_errors: bool = True
-
-
-def configure_exceptions(app: Application, settings: ExceptionSettings) -> None:
+class ExceptionExtension(BaseExtension):
     """
-    Configure exception handling on the application.
+    Exception handling extension.
 
     Catches AppException subclasses and converts to JSON responses.
     Catches unexpected exceptions and returns generic 500s.
 
     Usage:
-        from qtip.core.exceptions import configure_exceptions, ExceptionSettings
+        from qtip import build_app
+        from qtip.core.exceptions import ExceptionExtension, ExceptionSettings
 
-        configure_exceptions(app, settings)
+        app = build_app(
+            settings,
+            extensions=[ExceptionExtension(settings)],
+        )
     """
 
-    async def handle_app_exception(request: Request, exc: AppException) -> JSONResponse:
-        """Handle known application exceptions."""
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
 
-        if exc.status_code >= 500 and settings.log_server_errors:
-            logger.exception("server_error", error_code=exc.error_code, exc_info=exc)
+    async def startup(self, registry: svcs.Registry, app: FastAPI) -> dict[str, Any]:
+        app.add_exception_handler(AppException, self._handle_app_exception)  # type: ignore[]
+        app.add_exception_handler(Exception, self._handle_unexpected_exception)
+        return {}
+
+    def _handle_app_exception(
+        self, request: Request, exc: AppException
+    ) -> JSONResponse:
+        if exc.status_code >= 500 and self.settings.log_server_errors:
+            log.exception("server_error", error_code=exc.error_code)
         else:
-            logger.warning(
-                "client_error", error_code=exc.error_code, message=exc.message
-            )
+            log.warning("client_error", error_code=exc.error_code, message=exc.message)
 
-        response = exc.to_response()
-
-        # Add request_id from request.state (set by logging middleware)
-        if hasattr(request.state, "request_id"):
-            response["error"]["request_id"] = request.state.request_id
+        response = exc.to_response(request.state.get("request_id", None))
 
         headers = {}
         if isinstance(exc, RateLimited) and exc.retry_after:
@@ -172,16 +186,14 @@ def configure_exceptions(app: Application, settings: ExceptionSettings) -> None:
 
         return JSONResponse(
             status_code=exc.status_code,
-            content=response,
+            content=response.model_dump(exclude_none=True, mode="json"),
             headers=headers,
         )
 
-    async def handle_unexpected_exception(
-        request: Request, exc: Exception
+    def _handle_unexpected_exception(
+        self, request: Request, exc: Exception
     ) -> JSONResponse:
-        """Handle unexpected exceptions."""
-
-        logger.exception("unexpected_error", exc_info=exc)
+        log.exception("unexpected_error")
 
         response: dict[str, Any] = {
             "error": {
@@ -193,16 +205,10 @@ def configure_exceptions(app: Application, settings: ExceptionSettings) -> None:
         if hasattr(request.state, "request_id"):
             response["error"]["request_id"] = request.state.request_id
 
-        if settings.debug_errors:
+        if self.settings.debug:
             response["error"]["details"] = {
                 "exception": type(exc).__name__,
                 "message": str(exc),
             }
 
         return JSONResponse(status_code=500, content=response)
-
-    # Store handlers to be registered when app is built
-    app._exception_handlers = {  # type: ignore
-        AppException: handle_app_exception,
-        Exception: handle_unexpected_exception,
-    }

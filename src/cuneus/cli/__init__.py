@@ -13,12 +13,11 @@ from __future__ import annotations
 import importlib
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import click
 
-from qtip.core.application import load_pyproject_config, DEFAULT_TOOL_NAME
-from qtip.cli.console import (
+from cuneus.core.application import load_pyproject_config, DEFAULT_TOOL_NAME
+from cuneus.cli.console import (
     info,
     success,
     warning,
@@ -32,9 +31,6 @@ from qtip.cli.console import (
     confirm,
     table,
 )
-
-if TYPE_CHECKING:
-    from qtip.core.application import Application
 
 
 def get_config() -> dict:

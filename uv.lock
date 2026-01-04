@@ -62,74 +62,6 @@ wheels = [
 ]
 
 [[package]]
-name = "asgi-qtip"
-version = "0.2.1"
-source = { editable = "." }
-dependencies = [
-    { name = "click" },
-    { name = "fastapi" },
-    { name = "pydantic" },
-    { name = "pydantic-settings" },
-    { name = "structlog" },
-    { name = "svcs" },
-    { name = "uvicorn", extra = ["standard"] },
-]
-
-[package.optional-dependencies]
-all = [
-    { name = "alembic" },
-    { name = "asyncpg" },
-    { name = "redis" },
-    { name = "sqlalchemy", extra = ["asyncio"] },
-]
-database = [
-    { name = "alembic" },
-    { name = "asyncpg" },
-    { name = "sqlalchemy", extra = ["asyncio"] },
-]
-dev = [
-    { name = "alembic" },
-    { name = "asgi-lifespan" },
-    { name = "asyncpg" },
-    { name = "httpx" },
-    { name = "mypy" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-cov" },
-    { name = "redis" },
-    { name = "ruff" },
-    { name = "sqlalchemy", extra = ["asyncio"] },
-]
-redis = [
-    { name = "redis" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "alembic", marker = "extra == 'database'", specifier = ">=1.13.0" },
-    { name = "asgi-lifespan", marker = "extra == 'dev'", specifier = ">=2.1.0" },
-    { name = "asgi-qtip", extras = ["all"], marker = "extra == 'dev'" },
-    { name = "asgi-qtip", extras = ["database", "redis"], marker = "extra == 'all'" },
-    { name = "asyncpg", marker = "extra == 'database'", specifier = ">=0.29.0" },
-    { name = "click", specifier = ">=8.0" },
-    { name = "fastapi", specifier = ">=0.109.0" },
-    { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },
-    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.8" },
-    { name = "pydantic", specifier = ">=2.0" },
-    { name = "pydantic-settings", specifier = ">=2.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23" },
-    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.0" },
-    { name = "redis", marker = "extra == 'redis'", specifier = ">=5.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.3" },
-    { name = "sqlalchemy", extras = ["asyncio"], marker = "extra == 'database'", specifier = ">=2.0" },
-    { name = "structlog", specifier = ">=24.1.0" },
-    { name = "svcs", specifier = ">=24.1.0" },
-    { name = "uvicorn", extras = ["standard"], specifier = ">=0.27.0" },
-]
-provides-extras = ["database", "redis", "all", "dev"]
-
-[[package]]
 name = "async-timeout"
 version = "5.0.1"
 source = { registry = "https://pypi.org/simple" }
@@ -348,6 +280,74 @@ wheels = [
 toml = [
     { name = "tomli", marker = "python_full_version <= '3.11'" },
 ]
+
+[[package]]
+name = "cuneus"
+version = "0.2.1"
+source = { editable = "." }
+dependencies = [
+    { name = "click" },
+    { name = "fastapi" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "structlog" },
+    { name = "svcs" },
+    { name = "uvicorn", extra = ["standard"] },
+]
+
+[package.optional-dependencies]
+all = [
+    { name = "alembic" },
+    { name = "asyncpg" },
+    { name = "redis" },
+    { name = "sqlalchemy", extra = ["asyncio"] },
+]
+database = [
+    { name = "alembic" },
+    { name = "asyncpg" },
+    { name = "sqlalchemy", extra = ["asyncio"] },
+]
+dev = [
+    { name = "alembic" },
+    { name = "asgi-lifespan" },
+    { name = "asyncpg" },
+    { name = "httpx" },
+    { name = "mypy" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-cov" },
+    { name = "redis" },
+    { name = "ruff" },
+    { name = "sqlalchemy", extra = ["asyncio"] },
+]
+redis = [
+    { name = "redis" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "alembic", marker = "extra == 'database'", specifier = ">=1.13.0" },
+    { name = "asgi-lifespan", marker = "extra == 'dev'", specifier = ">=2.1.0" },
+    { name = "asyncpg", marker = "extra == 'database'", specifier = ">=0.29.0" },
+    { name = "click", specifier = ">=8.0" },
+    { name = "cuneus", extras = ["all"], marker = "extra == 'dev'" },
+    { name = "cuneus", extras = ["database", "redis"], marker = "extra == 'all'" },
+    { name = "fastapi", specifier = ">=0.109.0" },
+    { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },
+    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.8" },
+    { name = "pydantic", specifier = ">=2.0" },
+    { name = "pydantic-settings", specifier = ">=2.0" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23" },
+    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.0" },
+    { name = "redis", marker = "extra == 'redis'", specifier = ">=5.0" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.3" },
+    { name = "sqlalchemy", extras = ["asyncio"], marker = "extra == 'database'", specifier = ">=2.0" },
+    { name = "structlog", specifier = ">=24.1.0" },
+    { name = "svcs", specifier = ">=24.1.0" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.27.0" },
+]
+provides-extras = ["database", "redis", "all", "dev"]
 
 [[package]]
 name = "exceptiongroup"
