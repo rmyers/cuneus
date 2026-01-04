@@ -9,6 +9,12 @@ The name comes from Roman architecture: a _cuneus_ is the wedge-shaped stone in 
 ## Installation
 
 ```bash
+uv add cuneus
+```
+
+or
+
+```bash
 pip install cuneus
 ```
 
