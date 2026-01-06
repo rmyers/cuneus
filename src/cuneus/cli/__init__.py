@@ -61,9 +61,7 @@ def get_app():
 
 
 @click.group()
-@click.option(
-    "--config", "-c", type=click.Path(exists=True), help="Path to pyproject.toml"
-)
+@click.option("--config", "-c", type=click.Path(exists=True), help="Path to pyproject.toml")
 @click.option("--verbose", "-v", is_flag=True, help="Verbose output")
 @click.pass_context
 def cli(ctx: click.Context, config: str | None, verbose: bool) -> None:
@@ -304,13 +302,13 @@ def shell() -> None:
     success("Shell ready")
     click.echo()
 
-    banner = f"""{click.style(app.settings.app_name, fg='cyan', bold=True)} Interactive Shell
+    banner = f"""{click.style(app.settings.app_name, fg="cyan", bold=True)} Interactive Shell
 
 Available objects:
-  {click.style('app', fg='green')}          Application instance
-  {click.style('fastapi_app', fg='green')}  FastAPI instance
-  {click.style('settings', fg='green')}     Application settings
-  {click.style('state', fg='green')}        app.state (db_engine, redis, etc.)
+  {click.style("app", fg="green")}          Application instance
+  {click.style("fastapi_app", fg="green")}  FastAPI instance
+  {click.style("settings", fg="green")}     Application settings
+  {click.style("state", fg="green")}        app.state (db_engine, redis, etc.)
 """
 
     local_vars = {

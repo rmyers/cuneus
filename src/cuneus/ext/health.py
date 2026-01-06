@@ -92,9 +92,7 @@ class HealthExtension(BaseExtension):
                     overall_healthy = False
 
             return HealthResponse(
-                status=(
-                    HealthStatus.HEALTHY if overall_healthy else HealthStatus.UNHEALTHY
-                ),
+                status=(HealthStatus.HEALTHY if overall_healthy else HealthStatus.UNHEALTHY),
                 version=version,
                 services=_services,
             )
@@ -115,12 +113,8 @@ class HealthExtension(BaseExtension):
                 try:
                     await ping.aping()
                 except Exception as e:
-                    log.warning(
-                        "readiness_check_failed", service=ping.name, error=str(e)
-                    )
-                    raise HTTPException(
-                        status_code=503, detail=f"{ping.name} unhealthy"
-                    )
+                    log.warning("readiness_check_failed", service=ping.name, error=str(e))
+                    raise HTTPException(status_code=503, detail=f"{ping.name} unhealthy")
 
             return {"status": "ok"}
 

@@ -4,7 +4,7 @@ version = "0.2.1"
 description = "ASGI application wrapper"
 readme = "README.md"
 authors = [{ name = "Robert Myers", email = "robert@julython.org" }]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 
 dependencies = [
     "fastapi>=0.109.0",

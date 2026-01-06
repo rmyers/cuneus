@@ -170,9 +170,7 @@ class ExceptionExtension(BaseExtension):
         app.add_exception_handler(Exception, self._handle_unexpected_exception)
         return {}
 
-    def _handle_app_exception(
-        self, request: Request, exc: AppException
-    ) -> JSONResponse:
+    def _handle_app_exception(self, request: Request, exc: AppException) -> JSONResponse:
         if exc.status_code >= 500 and self.settings.log_server_errors:
             log.exception("server_error", error_code=exc.error_code)
         else:
@@ -190,9 +188,7 @@ class ExceptionExtension(BaseExtension):
             headers=headers,
         )
 
-    def _handle_unexpected_exception(
-        self, request: Request, exc: Exception
-    ) -> JSONResponse:
+    def _handle_unexpected_exception(self, request: Request, exc: Exception) -> JSONResponse:
         log.exception("unexpected_error")
 
         response: dict[str, Any] = {

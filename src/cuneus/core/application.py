@@ -164,9 +164,7 @@ def build_lifespan(settings: Settings, *extensions: Extension):
 
     @svcs.fastapi.lifespan
     @asynccontextmanager
-    async def lifespan(
-        app: FastAPI, registry: svcs.Registry
-    ) -> AsyncIterator[dict[str, Any]]:
+    async def lifespan(app: FastAPI, registry: svcs.Registry) -> AsyncIterator[dict[str, Any]]:
         async with AsyncExitStack() as stack:
             state: dict[str, Any] = {"settings": settings}
 

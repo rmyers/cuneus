@@ -50,10 +50,7 @@ def dim(message: str) -> None:
 def header(title: str) -> None:
     """Print a section header."""
     click.echo()
-    click.echo(
-        click.style(f"── {title} ", fg="cyan", bold=True)
-        + click.style("─" * 40, dim=True)
-    )
+    click.echo(click.style(f"── {title} ", fg="cyan", bold=True) + click.style("─" * 40, dim=True))
 
 
 # === Progress Indicators ===
@@ -182,11 +179,7 @@ def key_value(data: dict[str, str], title: str | None = None) -> None:
     for key, value in data.items():
         key_str = click.style(key.ljust(max_key_len), fg="cyan")
         # Mask secrets
-        if (
-            "secret" in key.lower()
-            or "password" in key.lower()
-            or "token" in key.lower()
-        ):
+        if "secret" in key.lower() or "password" in key.lower() or "token" in key.lower():
             value = "***"
         click.echo(f"  {key_str}  {value}")
 

@@ -18,7 +18,6 @@ async def test_cuneus():
     app.add_middleware(logging.LoggingMiddleware)
 
     with TestClient(app) as client:
-
         resp = client.get("/healthz")
         assert resp.status_code == 200
 
