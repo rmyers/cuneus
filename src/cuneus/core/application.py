@@ -7,74 +7,18 @@ Lightweight lifespan management for FastAPI applications.
 from __future__ import annotations
 
 import logging
-import tomllib
 import uuid
 from contextlib import AsyncExitStack, asynccontextmanager
-from pathlib import Path
 from typing import Any, AsyncContextManager, AsyncIterator, Protocol, runtime_checkable
 
 import svcs
-from fastapi import FastAPI, Request
-from pydantic import model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from fastapi import FastAPI, Request, middleware
 from starlette.types import ASGIApp
+from starlette.middleware import Middleware
+
+from .settings import Settings
 
 logger = logging.getLogger(__name__)
-
-DEFAULT_TOOL_NAME = "cuneus"
-
-
-def load_pyproject_config(
-    tool_name: str = DEFAULT_TOOL_NAME,
-    path: Path | None = None,
-) -> dict[str, Any]:
-    """Load configuration from pyproject.toml under [tool.{tool_name}]."""
-    if path is None:
-        path = Path.cwd()
-
-    for parent in [path, *path.parents]:
-        pyproject = parent / "pyproject.toml"
-        if pyproject.exists():
-            with open(pyproject, "rb") as f:
-                data = tomllib.load(f)
-            return data.get("tool", {}).get(tool_name, {})
-
-    return {}
-
-
-class Settings(BaseSettings):
-    """
-    Base settings that loads from:
-    1. pyproject.toml [tool.cuneus] (lowest priority)
-    2. .env file
-    3. Environment variables (highest priority)
-    """
-
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        extra="ignore",
-    )
-
-    app_name: str = "app"
-    app_module: str = "app.main:app"
-    debug: bool = False
-    version: str | None = None
-
-    # logging
-    log_level: str = "INFO"
-    log_json: bool = False
-    log_server_errors: bool = True
-
-    # health
-    health_enabled: bool = True
-    health_prefix: str = "/healthz"
-
-    @model_validator(mode="before")
-    @classmethod
-    def load_from_pyproject(cls, data: dict[str, Any]) -> dict[str, Any]:
-        pyproject_config = load_pyproject_config()
-        return {**pyproject_config, **data}
 
 
 @runtime_checkable
@@ -101,6 +45,10 @@ class Extension(Protocol):
         """
         ...
 
+    def middleware(self) -> list[Middleware]:
+        """Return a list of middleware required by this Extension."""
+        ...
+
 
 class BaseExtension:
     """
@@ -123,6 +71,9 @@ class BaseExtension:
         """Override to cleanup resources during app shutdown."""
         pass
 
+    def middleware(self) -> list[Middleware]:
+        return []
+
     @asynccontextmanager
     async def register(
         self, registry: svcs.Registry, app: FastAPI
@@ -135,20 +86,25 @@ class BaseExtension:
             await self.shutdown(app)
 
 
-def build_lifespan(settings: Settings, *extensions: Extension):
+def build_app(
+    *extensions: Extension,
+    settings: Settings = Settings(),
+    **fastapi_kwargs,
+) -> tuple[FastAPI, Any]:
     """
-    Create a lifespan context manager for FastAPI.
+    Build a FastAPI with extensions preconfigured.
 
     The returned lifespan has a `.registry` attribute for testing overrides.
 
     Usage:
-        from cuneus import build_lifespan, Settings
+        from cuneus import build_app, Settings, SettingsExtension
         from myapp.extensions import DatabaseExtension
 
         settings = Settings()
-        lifespan = build_lifespan(
-            settings,
+        app = build_app(
+            SettingsExtension(settings),
             DatabaseExtension(settings),
+            title="Args are passed to FastAPI",
         )
 
         app = FastAPI(lifespan=lifespan, title="My App")
@@ -159,14 +115,22 @@ def build_lifespan(settings: Settings, *extensions: Extension):
         def test_with_mock_db(client):
             mock_db = Mock(spec=Database)
             lifespan.registry.register_value(Database, mock_db)
-            # ...
     """
+    if "lifespan" in fastapi_kwargs:
+        raise AttributeError("cannot set lifespan with build_app")
+
+    middleware = [
+        # Always add the request id middleware as the first
+        Middleware(RequestIDMiddleware, header_name=settings.request_id_header),
+    ]
 
     @svcs.fastapi.lifespan
     @asynccontextmanager
-    async def lifespan(app: FastAPI, registry: svcs.Registry) -> AsyncIterator[dict[str, Any]]:
+    async def lifespan(
+        app: FastAPI, registry: svcs.Registry
+    ) -> AsyncIterator[dict[str, Any]]:
         async with AsyncExitStack() as stack:
-            state: dict[str, Any] = {"settings": settings}
+            state: dict[str, Any] = {}
 
             for ext in extensions:
                 ext_state = await stack.enter_async_context(ext.register(registry, app))
@@ -177,7 +141,7 @@ def build_lifespan(settings: Settings, *extensions: Extension):
 
             yield state
 
-    return lifespan
+    app = FastAPI(**fastapi_kwargs, lifespan=lifespan)
 
 
 class RequestIDMiddleware:
