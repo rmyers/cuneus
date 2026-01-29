@@ -1,21 +1,11 @@
 from starlette.testclient import TestClient
 
-from fastapi import FastAPI
-from cuneus import ExceptionExtension, Settings, build_lifespan
-from cuneus.middleware import logging
+from cuneus import build_app
 from cuneus.ext import health
 
 
 async def test_cuneus():
-    settings = Settings()
-    lifespan = build_lifespan(
-        settings,
-        ExceptionExtension(settings),
-        logging.LoggingExtension(settings),
-        health.HealthExtension(settings),
-    )
-    app = FastAPI(lifespan=lifespan)
-    app.add_middleware(logging.LoggingMiddleware)
+    app, _ = build_app()
 
     with TestClient(app) as client:
         resp = client.get("/healthz")

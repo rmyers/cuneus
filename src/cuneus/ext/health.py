@@ -9,10 +9,11 @@ from typing import Any
 
 import structlog
 import svcs
-from fastapi import APIRouter, FastAPI, Request
+from fastapi import APIRouter, FastAPI
 from pydantic import BaseModel
 
-from cuneus.core.application import BaseExtension, Settings
+from ..core.extensions import BaseExtension
+from ..core.settings import Settings
 
 log = structlog.get_logger()
 
@@ -53,8 +54,8 @@ class HealthExtension(BaseExtension):
         )
     """
 
-    def __init__(self, settings: Settings) -> None:
-        self.settings = settings
+    def __init__(self, settings: Settings | None = None) -> None:
+        self.settings = settings or Settings()
 
     async def startup(self, registry: svcs.Registry, app: FastAPI) -> dict[str, Any]:
         if not self.settings.health_enabled:
@@ -92,7 +93,9 @@ class HealthExtension(BaseExtension):
                     overall_healthy = False
 
             return HealthResponse(
-                status=(HealthStatus.HEALTHY if overall_healthy else HealthStatus.UNHEALTHY),
+                status=(
+                    HealthStatus.HEALTHY if overall_healthy else HealthStatus.UNHEALTHY
+                ),
                 version=version,
                 services=_services,
             )
@@ -113,8 +116,12 @@ class HealthExtension(BaseExtension):
                 try:
                     await ping.aping()
                 except Exception as e:
-                    log.warning("readiness_check_failed", service=ping.name, error=str(e))
-                    raise HTTPException(status_code=503, detail=f"{ping.name} unhealthy")
+                    log.warning(
+                        "readiness_check_failed", service=ping.name, error=str(e)
+                    )
+                    raise HTTPException(
+                        status_code=503, detail=f"{ping.name} unhealthy"
+                    )
 
             return {"status": "ok"}
 

@@ -6,152 +6,66 @@ Lightweight lifespan management for FastAPI applications.
 
 from __future__ import annotations
 
-import logging
-import tomllib
-import uuid
 from contextlib import AsyncExitStack, asynccontextmanager
-from pathlib import Path
-from typing import Any, AsyncContextManager, AsyncIterator, Protocol, runtime_checkable
+from typing import Any, AsyncIterator, Callable
 
+import click
 import svcs
-from fastapi import FastAPI, Request
-from pydantic import model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
-from starlette.types import ASGIApp
+from fastapi import FastAPI
+from starlette.middleware import Middleware
 
-logger = logging.getLogger(__name__)
-
-DEFAULT_TOOL_NAME = "cuneus"
-
-
-def load_pyproject_config(
-    tool_name: str = DEFAULT_TOOL_NAME,
-    path: Path | None = None,
-) -> dict[str, Any]:
-    """Load configuration from pyproject.toml under [tool.{tool_name}]."""
-    if path is None:
-        path = Path.cwd()
-
-    for parent in [path, *path.parents]:
-        pyproject = parent / "pyproject.toml"
-        if pyproject.exists():
-            with open(pyproject, "rb") as f:
-                data = tomllib.load(f)
-            return data.get("tool", {}).get(tool_name, {})
-
-    return {}
+from .settings import Settings
+from .execptions import ExceptionExtension
+from .logging import LoggingExtension
+from .extensions import Extension, HasCLI, HasMiddleware
+from ..ext.health import HealthExtension
 
 
-class Settings(BaseSettings):
+type ExtensionInput = Extension | Callable[..., Extension]
+
+DEFAULT_EXTENSIONS = (
+    LoggingExtension,
+    HealthExtension,
+    ExceptionExtension,
+)
+
+
+def _instantiate_extension(
+    ext: ExtensionInput, settings: Settings | None = None
+) -> Extension:
+    if isinstance(ext, type):
+        # It's a class, instantiate it
+        return ext(settings)
+    if callable(ext):
+        # It's a factory function
+        return ext(settings)
+    # Already an instance
+    return ext
+
+
+def build_app(
+    *extensions: ExtensionInput,
+    settings: Settings | None = None,
+    include_defaults: bool = True,
+    **fastapi_kwargs: Any,
+) -> tuple[FastAPI, click.Group]:
     """
-    Base settings that loads from:
-    1. pyproject.toml [tool.cuneus] (lowest priority)
-    2. .env file
-    3. Environment variables (highest priority)
-    """
-
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        extra="ignore",
-    )
-
-    app_name: str = "app"
-    app_module: str = "app.main:app"
-    debug: bool = False
-    version: str | None = None
-
-    # logging
-    log_level: str = "INFO"
-    log_json: bool = False
-    log_server_errors: bool = True
-
-    # health
-    health_enabled: bool = True
-    health_prefix: str = "/healthz"
-
-    @model_validator(mode="before")
-    @classmethod
-    def load_from_pyproject(cls, data: dict[str, Any]) -> dict[str, Any]:
-        pyproject_config = load_pyproject_config()
-        return {**pyproject_config, **data}
-
-
-@runtime_checkable
-class Extension(Protocol):
-    """
-    Protocol for extensions that hook into app lifecycle.
-
-    Extensions can:
-    - Register services with svcs
-    - Add routes via app.include_router()
-    - Add exception handlers via app.add_exception_handler()
-    - Return state to merge into lifespan state
-    """
-
-    def register(
-        self, registry: svcs.Registry, app: FastAPI
-    ) -> AsyncContextManager[dict[str, Any]]:
-        """
-        Async context manager for lifecycle.
-
-        - Enter: startup (register services, add routes, etc.)
-        - Yield: dict of state to merge into lifespan state
-        - Exit: shutdown (cleanup resources)
-        """
-        ...
-
-
-class BaseExtension:
-    """
-    Base class for extensions with explicit startup/shutdown hooks.
-
-    For simple extensions, override startup() and shutdown().
-    For full control, override register() directly.
-    """
-
-    async def startup(self, registry: svcs.Registry, app: FastAPI) -> dict[str, Any]:
-        """
-        Override to setup resources during app startup.
-
-        You can call app.include_router(), app.add_exception_handler(), etc.
-        Returns a dict of state to merge into lifespan state.
-        """
-        return {}
-
-    async def shutdown(self, app: FastAPI) -> None:
-        """Override to cleanup resources during app shutdown."""
-        pass
-
-    @asynccontextmanager
-    async def register(
-        self, registry: svcs.Registry, app: FastAPI
-    ) -> AsyncIterator[dict[str, Any]]:
-        """Wraps startup/shutdown into async context manager."""
-        state = await self.startup(registry, app)
-        try:
-            yield state
-        finally:
-            await self.shutdown(app)
-
-
-def build_lifespan(settings: Settings, *extensions: Extension):
-    """
-    Create a lifespan context manager for FastAPI.
+    Build a FastAPI with extensions preconfigured.
 
     The returned lifespan has a `.registry` attribute for testing overrides.
 
     Usage:
-        from cuneus import build_lifespan, Settings
+        from cuneus import build_app, Settings, SettingsExtension
         from myapp.extensions import DatabaseExtension
 
         settings = Settings()
-        lifespan = build_lifespan(
-            settings,
+        app, cli = build_app(
+            SettingsExtension(settings),
             DatabaseExtension(settings),
+            title="Args are passed to FastAPI",
         )
 
-        app = FastAPI(lifespan=lifespan, title="My App")
+        __all__ = ["app", "cli"]
 
     Testing:
         from myapp import app, lifespan
@@ -159,16 +73,39 @@ def build_lifespan(settings: Settings, *extensions: Extension):
         def test_with_mock_db(client):
             mock_db = Mock(spec=Database)
             lifespan.registry.register_value(Database, mock_db)
-            # ...
     """
+    if "lifespan" in fastapi_kwargs:
+        raise AttributeError("cannot set lifespan with build_app")
+    if "middleware" in fastapi_kwargs:
+        raise AttributeError("cannot set middleware with build_app")
+
+    settings = settings or Settings()
+
+    if include_defaults:
+        # Allow users to override a default extension
+        user_types = {type(ext) for ext in extensions}
+        defaults = [ext for ext in DEFAULT_EXTENSIONS if type(ext) not in user_types]
+        all_inputs = (*defaults, *extensions)
+    else:
+        all_inputs = extensions
+
+    all_extensions = [_instantiate_extension(ext, settings) for ext in all_inputs]
+
+    @click.group()
+    @click.pass_context
+    def app_cli(ctx: click.Context) -> None:
+        """Application CLI."""
+        ctx.ensure_object(dict)
 
     @svcs.fastapi.lifespan
     @asynccontextmanager
-    async def lifespan(app: FastAPI, registry: svcs.Registry) -> AsyncIterator[dict[str, Any]]:
+    async def lifespan(
+        app: FastAPI, registry: svcs.Registry
+    ) -> AsyncIterator[dict[str, Any]]:
         async with AsyncExitStack() as stack:
-            state: dict[str, Any] = {"settings": settings}
+            state: dict[str, Any] = {}
 
-            for ext in extensions:
+            for ext in all_extensions:
                 ext_state = await stack.enter_async_context(ext.register(registry, app))
                 if ext_state:
                     if overlap := state.keys() & ext_state.keys():
@@ -177,52 +114,14 @@ def build_lifespan(settings: Settings, *extensions: Extension):
 
             yield state
 
-    return lifespan
+    # Parse extensions for middleware and cli commands
+    middleware: list[Middleware] = []
 
+    for ext in all_extensions:
+        if isinstance(ext, HasMiddleware):
+            middleware.extend(ext.middleware())
+        if isinstance(ext, HasCLI):
+            ext.register_cli(app_cli)
 
-class RequestIDMiddleware:
-    """
-    Middleware that adds a unique request_id to each request.
-
-    Access via request.state.request_id
-    """
-
-    def __init__(self, app: ASGIApp, header_name: str = "X-Request-ID"):
-        self.app = app
-        self.header_name = header_name
-
-    async def __call__(self, scope, receive, send):
-        if scope["type"] != "http":
-            await self.app(scope, receive, send)
-            return
-
-        # Check for existing request ID in headers, or generate new one
-        headers = dict(scope.get("headers", []))
-        request_id = headers.get(
-            self.header_name.lower().encode(), str(uuid.uuid4())[:8].encode()
-        ).decode()
-
-        # Store in scope state
-        if "state" not in scope:
-            scope["state"] = {}
-        scope["state"]["request_id"] = request_id
-
-        # Add request ID to response headers
-        async def send_with_request_id(message):
-            if message["type"] == "http.response.start":
-                headers = list(message.get("headers", []))
-                headers.append((self.header_name.encode(), request_id.encode()))
-                message["headers"] = headers
-            await send(message)
-
-        await self.app(scope, receive, send_with_request_id)
-
-
-def get_settings(request: Request) -> Settings:
-    """Get settings from request state."""
-    return request.state.settings
-
-
-def get_request_id(request: Request) -> str:
-    """Get the request ID from request state."""
-    return request.state.request_id
+    app = FastAPI(lifespan=lifespan, middleware=middleware, **fastapi_kwargs)
+    return app, app_cli

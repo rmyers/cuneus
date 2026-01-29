@@ -4,17 +4,21 @@ Structured logging with structlog and request context.
 
 from __future__ import annotations
 
+from contextvars import ContextVar
 import logging
 import time
 import uuid
-from typing import Any, AsyncIterator
+from typing import Any, Awaitable, Callable, MutableMapping
 
 import structlog
 import svcs
 from fastapi import FastAPI, Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware import Middleware
+from starlette.types import ASGIApp, Scope, Send, Receive
 
-from cuneus.core.application import BaseExtension, Settings
+from .extensions import BaseExtension
+from .settings import Settings
 
 
 class LoggingExtension(BaseExtension):
@@ -34,8 +38,8 @@ class LoggingExtension(BaseExtension):
         )
     """
 
-    def __init__(self, settings: Settings) -> None:
-        self.settings = settings
+    def __init__(self, settings: Settings | None = None) -> None:
+        self.settings = settings or Settings()
         self._configure_structlog()
 
     def _configure_structlog(self) -> None:
@@ -52,10 +56,9 @@ class LoggingExtension(BaseExtension):
             structlog.processors.UnicodeDecoder(),
         ]
 
+        renderer: structlog.types.Processor = structlog.dev.ConsoleRenderer(colors=True)
         if settings.log_json:
             renderer = structlog.processors.JSONRenderer()
-        else:
-            renderer = structlog.dev.ConsoleRenderer(colors=True)
 
         # Configure structlog
         structlog.configure(
@@ -92,6 +95,14 @@ class LoggingExtension(BaseExtension):
         # app.add_middleware(RequestLoggingMiddleware)
         return {}
 
+    def middleware(self) -> list[Middleware]:
+        return [
+            Middleware(
+                LoggingMiddleware,
+                header_name=self.settings.request_id_header,
+            ),
+        ]
+
 
 class LoggingMiddleware(BaseHTTPMiddleware):
     """
@@ -102,8 +113,14 @@ class LoggingMiddleware(BaseHTTPMiddleware):
     - Adds request_id to response headers
     """
 
-    async def dispatch(self, request: Request, call_next) -> Response:
-        request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())[:8]
+    def __init__(self, app: ASGIApp, header_name: str = "X-Request-ID") -> None:
+        self.header_name = header_name
+        super().__init__(app)
+
+    async def dispatch(
+        self, request: Request, call_next: Callable[..., Awaitable[Response]]
+    ) -> Response:
+        request_id = request.headers.get(self.header_name) or str(uuid.uuid4())[:8]
 
         structlog.contextvars.clear_contextvars()
         structlog.contextvars.bind_contextvars(
@@ -127,13 +144,52 @@ class LoggingMiddleware(BaseHTTPMiddleware):
                 duration_ms=round(duration_ms, 2),
             )
 
-            response.headers["X-Request-ID"] = request_id
+            response.headers[self.header_name] = request_id
             return response
 
         except Exception:
             raise
         finally:
             structlog.contextvars.clear_contextvars()
+
+
+# Used by httpx for request ID propagation
+request_id_ctx: ContextVar[str | None] = ContextVar("request_id", default=None)
+
+
+class RequestIDMiddleware:
+    def __init__(self, app: ASGIApp, header_name: str = "X-Request-ID") -> None:
+        self.app = app
+        self.header_name = header_name
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        headers = dict(scope.get("headers", []))
+        request_id = headers.get(
+            self.header_name.lower().encode(), str(uuid.uuid4())[:8].encode()
+        ).decode()
+
+        if "state" not in scope:
+            scope["state"] = {}
+        scope["state"]["request_id"] = request_id
+
+        # Set contextvar for use in HTTP clients
+        token = request_id_ctx.set(request_id)
+
+        async def send_with_request_id(message: MutableMapping[str, Any]) -> None:
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers", []))
+                headers.append((self.header_name.encode(), request_id.encode()))
+                message["headers"] = headers
+            await send(message)
+
+        try:
+            await self.app(scope, receive, send_with_request_id)
+        finally:
+            request_id_ctx.reset(token)
 
 
 # === Public API ===
@@ -147,7 +203,7 @@ def get_logger(**initial_context: Any) -> structlog.stdlib.BoundLogger:
         log = get_logger()
         log.info("user logged in", user_id=123)
     """
-    log = structlog.get_logger()
+    log = structlog.stdlib.get_logger()
     if initial_context:
         log = log.bind(**initial_context)
     return log

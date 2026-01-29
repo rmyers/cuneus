@@ -12,7 +12,8 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from cuneus.core.application import BaseExtension, Settings
+from .extensions import BaseExtension
+from .settings import Settings
 
 log = structlog.get_logger()
 
@@ -103,7 +104,7 @@ class RateLimited(AppException):
     error_code = "rate_limited"
     message = "Too many requests"
 
-    def __init__(self, retry_after: int | None = None, **kwargs):
+    def __init__(self, retry_after: int | None = None, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.retry_after = retry_after
 
@@ -162,15 +163,17 @@ class ExceptionExtension(BaseExtension):
         )
     """
 
-    def __init__(self, settings: Settings) -> None:
-        self.settings = settings
+    def __init__(self, settings: Settings | None = None) -> None:
+        self.settings = settings or Settings()
 
     async def startup(self, registry: svcs.Registry, app: FastAPI) -> dict[str, Any]:
-        app.add_exception_handler(AppException, self._handle_app_exception)  # type: ignore[]
+        app.add_exception_handler(AppException, self._handle_app_exception)  # type: ignore[arg-type]
         app.add_exception_handler(Exception, self._handle_unexpected_exception)
         return {}
 
-    def _handle_app_exception(self, request: Request, exc: AppException) -> JSONResponse:
+    def _handle_app_exception(
+        self, request: Request, exc: AppException
+    ) -> JSONResponse:
         if exc.status_code >= 500 and self.settings.log_server_errors:
             log.exception("server_error", error_code=exc.error_code)
         else:
@@ -188,7 +191,9 @@ class ExceptionExtension(BaseExtension):
             headers=headers,
         )
 
-    def _handle_unexpected_exception(self, request: Request, exc: Exception) -> JSONResponse:
+    def _handle_unexpected_exception(
+        self, request: Request, exc: Exception
+    ) -> JSONResponse:
         log.exception("unexpected_error")
 
         response: dict[str, Any] = {
