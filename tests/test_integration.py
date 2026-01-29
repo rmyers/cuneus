@@ -9,6 +9,6 @@ async def test_cuneus():
 
     with TestClient(app) as client:
         resp = client.get("/healthz")
-        assert resp.status_code == 200
+        assert resp.status_code == 201
 
         assert resp.json()["status"] == health.HealthStatus.HEALTHY

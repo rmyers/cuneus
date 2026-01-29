@@ -11,6 +11,7 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any, AsyncIterator, Callable
 
 import click
+import structlog
 import svcs
 from fastapi import FastAPI
 from starlette.middleware import Middleware
@@ -21,6 +22,7 @@ from .logging import LoggingExtension
 from .extensions import Extension, HasCLI, HasMiddleware
 from ..ext.health import HealthExtension
 
+logger = structlog.stdlib.get_logger("cuneus")
 
 type ExtensionInput = Extension | Callable[..., Extension]
 
@@ -128,8 +130,10 @@ def build_app(
 
     for ext in all_extensions:
         if isinstance(ext, HasMiddleware):
+            logger.debug(f"Loading middleware from {ext.__class__.__name__}")
             middleware.extend(ext.middleware())
         if isinstance(ext, HasCLI):
+            logger.debug(f"Adding cli commands from {ext.__class__.__name__}")
             ext.register_cli(app_cli)
 
     app = FastAPI(lifespan=lifespan, middleware=middleware, **fastapi_kwargs)

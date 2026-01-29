@@ -20,6 +20,58 @@ from starlette.types import ASGIApp, Scope, Send, Receive
 from .extensions import BaseExtension
 from .settings import Settings
 
+logger = structlog.stdlib.get_logger("cuneus")
+
+
+def configure_structlog(settings: Settings | None = None) -> None:
+    log_settings = settings or Settings()
+
+    # Shared processors
+    shared_processors: list[structlog.types.Processor] = [
+        structlog.contextvars.merge_contextvars,
+        structlog.stdlib.add_log_level,
+        structlog.stdlib.add_logger_name,
+        structlog.stdlib.PositionalArgumentsFormatter(),
+        structlog.processors.TimeStamper(fmt="iso", utc=True),
+        structlog.processors.StackInfoRenderer(),
+        structlog.processors.UnicodeDecoder(),
+    ]
+
+    renderer: structlog.types.Processor = structlog.dev.ConsoleRenderer(colors=True)
+    if log_settings.log_json:
+        renderer = structlog.processors.JSONRenderer()
+
+    # Configure structlog
+    structlog.configure(
+        processors=shared_processors
+        + [
+            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
+        ],
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        cache_logger_on_first_use=True,
+    )
+
+    # Create formatter for stdlib
+    formatter = structlog.stdlib.ProcessorFormatter(
+        foreign_pre_chain=shared_processors,
+        processors=[
+            structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+            renderer,
+        ],
+    )
+
+    # Configure root logger
+    handler = logging.StreamHandler()
+    handler.setFormatter(formatter)
+
+    root_logger = logging.getLogger()
+    root_logger.handlers.clear()
+    root_logger.addHandler(handler)
+    root_logger.setLevel(log_settings.log_level.upper())
+
+    # Quiet noisy loggers
+    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+
 
 class LoggingExtension(BaseExtension):
     """
@@ -40,56 +92,7 @@ class LoggingExtension(BaseExtension):
 
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or Settings()
-        self._configure_structlog()
-
-    def _configure_structlog(self) -> None:
-        settings = self.settings
-
-        # Shared processors
-        shared_processors: list[structlog.types.Processor] = [
-            structlog.contextvars.merge_contextvars,
-            structlog.stdlib.add_log_level,
-            structlog.stdlib.add_logger_name,
-            structlog.stdlib.PositionalArgumentsFormatter(),
-            structlog.processors.TimeStamper(fmt="iso"),
-            structlog.processors.StackInfoRenderer(),
-            structlog.processors.UnicodeDecoder(),
-        ]
-
-        renderer: structlog.types.Processor = structlog.dev.ConsoleRenderer(colors=True)
-        if settings.log_json:
-            renderer = structlog.processors.JSONRenderer()
-
-        # Configure structlog
-        structlog.configure(
-            processors=shared_processors
-            + [
-                structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
-            ],
-            logger_factory=structlog.stdlib.LoggerFactory(),
-            cache_logger_on_first_use=True,
-        )
-
-        # Create formatter for stdlib
-        formatter = structlog.stdlib.ProcessorFormatter(
-            foreign_pre_chain=shared_processors,
-            processors=[
-                structlog.stdlib.ProcessorFormatter.remove_processors_meta,
-                renderer,
-            ],
-        )
-
-        # Configure root logger
-        handler = logging.StreamHandler()
-        handler.setFormatter(formatter)
-
-        root_logger = logging.getLogger()
-        root_logger.handlers.clear()
-        root_logger.addHandler(handler)
-        root_logger.setLevel(settings.log_level.upper())
-
-        # Quiet noisy loggers
-        logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+        configure_structlog(settings)
 
     async def startup(self, registry: svcs.Registry, app: FastAPI) -> dict[str, Any]:
         # app.add_middleware(RequestLoggingMiddleware)
@@ -120,18 +123,24 @@ class LoggingMiddleware(BaseHTTPMiddleware):
     async def dispatch(
         self, request: Request, call_next: Callable[..., Awaitable[Response]]
     ) -> Response:
+        path = request.url.path
+        # Exclude health routes as these are just noise
+        # TODO(rmyers): make this configurable
+        if path.startswith("/health"):
+            return await call_next(request)
+
         request_id = request.headers.get(self.header_name) or str(uuid.uuid4())[:8]
 
         structlog.contextvars.clear_contextvars()
         structlog.contextvars.bind_contextvars(
             request_id=request_id,
             method=request.method,
-            path=request.url.path,
+            path=path,
         )
 
         request.state.request_id = request_id
 
-        log = structlog.get_logger()
+        log = structlog.stdlib.get_logger("cuneus")
         start_time = time.perf_counter()
 
         try:

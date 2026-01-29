@@ -63,6 +63,8 @@ def dev(host: str, port: int) -> None:
         host=host,
         port=port,
         reload=True,
+        log_config=None,
+        server_header=False,
     )
 
 
@@ -81,6 +83,8 @@ def prod(host: str, port: int, workers: int) -> None:
         host=host,
         port=port,
         workers=workers,
+        log_config=None,
+        server_header=False,
     )
 
 
