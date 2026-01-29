@@ -6,6 +6,7 @@ Lightweight lifespan management for FastAPI applications.
 
 from __future__ import annotations
 
+import inspect
 from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any, AsyncIterator, Callable
 
@@ -33,13 +34,21 @@ DEFAULT_EXTENSIONS = (
 def _instantiate_extension(
     ext: ExtensionInput, settings: Settings | None = None
 ) -> Extension:
-    if isinstance(ext, type):
-        # It's a class, instantiate it
-        return ext(settings)
-    if callable(ext):
-        # It's a factory function
-        return ext(settings)
-    # Already an instance
+    if isinstance(ext, type) or callable(ext):
+        sig = inspect.signature(ext)
+
+        # Check if it accepts a 'settings' parameter
+        if "settings" in sig.parameters:
+            return ext(settings=settings)
+
+        # Check if it accepts **kwargs
+        has_var_keyword = any(
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+        )
+        if has_var_keyword:
+            return ext(settings=settings)
+
+        return ext()
     return ext
 
 

@@ -33,8 +33,6 @@ class Extension(Protocol):
     - Return state to merge into lifespan state
     """
 
-    def __init__(self, settings: Settings | None = None) -> None: ...
-
     def register(
         self, registry: svcs.Registry, app: FastAPI
     ) -> AsyncContextManager[dict[str, Any]]:
