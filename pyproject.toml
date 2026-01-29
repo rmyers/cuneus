@@ -1,6 +1,6 @@
 [project]
 name = "cuneus"
-version = "0.2.2"
+version = "0.2.3"
 description = "ASGI application wrapper"
 readme = "README.md"
 authors = [{ name = "Robert Myers", email = "robert@julython.org" }]

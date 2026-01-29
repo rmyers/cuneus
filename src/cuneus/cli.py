@@ -1,9 +1,12 @@
 """Base CLI that cuneus provides."""
 
-import click
+from pathlib import Path
+
 import importlib
 import sys
 from typing import Any, cast
+
+import click
 
 from .core.settings import Settings
 
@@ -37,6 +40,10 @@ def get_user_cli() -> click.Group | None:
 def cli(ctx: click.Context) -> None:
     """Cuneus CLI - FastAPI application framework."""
     ctx.ensure_object(dict)
+    # Ensure cwd is in path for local imports
+    cwd = str(Path.cwd())
+    if cwd not in sys.path:
+        sys.path.insert(0, cwd)
 
 
 @cli.command()
