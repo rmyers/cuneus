@@ -51,6 +51,7 @@ class Settings(CuneusBaseSettings):
 
     app_name: str = "app"
     app_module: str = "app.main:app"
+    cli_module: str = "app.main:cli"
     debug: bool = False
     version: str | None = None
 

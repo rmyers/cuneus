@@ -3,11 +3,20 @@ from __future__ import annotations
 import logging
 
 from contextlib import asynccontextmanager
-from typing import Any, AsyncContextManager, AsyncIterator, Protocol, runtime_checkable
+from typing import (
+    Any,
+    AsyncContextManager,
+    AsyncIterator,
+    Protocol,
+    runtime_checkable,
+)
 
 import svcs
+from click import Group
 from fastapi import FastAPI
 from starlette.middleware import Middleware
+
+from .settings import Settings
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +33,8 @@ class Extension(Protocol):
     - Return state to merge into lifespan state
     """
 
+    def __init__(self, settings: Settings | None = None) -> None: ...
+
     def register(
         self, registry: svcs.Registry, app: FastAPI
     ) -> AsyncContextManager[dict[str, Any]]:
@@ -36,8 +47,19 @@ class Extension(Protocol):
         """
         ...
 
-    def middleware(self):
-        """Return a list of middleware required by this Extension."""
+
+@runtime_checkable
+class HasMiddleware(Protocol):
+    """Extension that provides middleware."""
+
+    def middleware(self) -> list[Middleware]: ...
+
+
+@runtime_checkable
+class HasCLI(Protocol):
+    """Extension that provides CLI commands."""
+
+    def register_cli(self, cli_group: Group) -> None: ...
 
 
 class BaseExtension:
@@ -47,6 +69,9 @@ class BaseExtension:
     For simple extensions, override startup() and shutdown().
     For full control, override register() directly.
     """
+
+    def __init__(self, settings: Settings | None = None):
+        self.settings = settings or Settings()
 
     async def startup(self, registry: svcs.Registry, app: FastAPI) -> dict[str, Any]:
         """
@@ -60,9 +85,6 @@ class BaseExtension:
     async def shutdown(self, app: FastAPI) -> None:
         """Override to cleanup resources during app shutdown."""
         pass
-
-    def middleware(self) -> list[Middleware]:
-        return []
 
     @asynccontextmanager
     async def register(

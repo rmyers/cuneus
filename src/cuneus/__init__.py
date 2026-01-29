@@ -15,15 +15,8 @@ Example:
     fastapi_app = app.build()
 """
 
-from cuneus.core.application import (
-    BaseExtension,
-    Extension,
-    Settings,
-    build_lifespan,
-    get_settings,
-    load_pyproject_config,
-)
-from cuneus.core.execptions import (
+from .core.application import build_app
+from .core.execptions import (
     AppException,
     BadRequest,
     Unauthorized,
@@ -37,16 +30,19 @@ from cuneus.core.execptions import (
     ExternalServiceError,
     ExceptionExtension,
 )
+from .core.extensions import BaseExtension, Extension
+from .core.settings import Settings
 
 __version__ = "0.2.1"
 __all__ = [
-    # Core
+    # Core exported functions
+    # Application
+    "build_app",
+    # Extension
     "BaseExtension",
     "Extension",
+    # Settings
     "Settings",
-    "build_lifespan",
-    "get_settings",
-    "load_pyproject_config",
     # Exceptions
     "AppException",
     "BadRequest",
