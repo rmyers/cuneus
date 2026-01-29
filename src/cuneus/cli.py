@@ -13,9 +13,16 @@ from .core.settings import Settings
 
 def import_from_string(import_str: str) -> Any:
     """Import an object from a module:attribute string."""
+    # Ensure cwd is in path for local imports
+    cwd = str(Path.cwd())
+    if cwd not in sys.path:
+        sys.path.insert(0, cwd)
+
     module_path, _, attr = import_str.partition(":")
     if not attr:
-        attr = "app"  # default attribute name
+        raise ValueError(
+            f"module_path missing function {import_str} expecting 'module.path:name'"
+        )
 
     module = importlib.import_module(module_path)
     return getattr(module, attr)
@@ -40,10 +47,6 @@ def get_user_cli() -> click.Group | None:
 def cli(ctx: click.Context) -> None:
     """Cuneus CLI - FastAPI application framework."""
     ctx.ensure_object(dict)
-    # Ensure cwd is in path for local imports
-    cwd = str(Path.cwd())
-    if cwd not in sys.path:
-        sys.path.insert(0, cwd)
 
 
 @cli.command()
