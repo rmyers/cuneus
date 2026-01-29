@@ -33,9 +33,14 @@ DEFAULT_EXTENSIONS = (
 def _instantiate_extension(
     ext: ExtensionInput, settings: Settings | None = None
 ) -> Extension:
-    if isinstance(ext, Extension):
-        return ext
-    return ext(settings)
+    if isinstance(ext, type):
+        # It's a class, instantiate it
+        return ext(settings)
+    if callable(ext):
+        # It's a factory function
+        return ext(settings)
+    # Already an instance
+    return ext
 
 
 def build_app(

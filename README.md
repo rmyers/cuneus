@@ -21,26 +21,26 @@ pip install cuneus
 ## Quick Start
 
 ```python
-# app.py
+# app/main.py
 from fastapi import FastAPI
-from cuneus import build_lifespan, Settings
-from cuneus.middleware.logging import LoggingMiddleware
+from cuneus import build_app, Settings
 
 from myapp.extensions import DatabaseExtension
 
-settings = Settings()
-lifespan = build_lifespan(
-    settings,
-    DatabaseExtension(settings),
+class MyAppSettings(Settings):
+    my_mood: str = "extatic"
+
+app, cli = build_app(
+    DatabaseExtension,
+    settings=MyAppSettings(),
 )
 
-app = FastAPI(lifespan=lifespan, title="My App", version="1.0.0")
+app.include_router(my_router)
 
-# Add middleware directly to FastAPI
-app.add_middleware(LoggingMiddleware)
+__all__ = ["app", "cli"]
 ```
 
-That's it. Extensions handle their lifecycle, FastAPI handles the rest.
+That's it. Extensions handle their lifecycle, registration, and middleware.
 
 ## Creating Extensions
 
@@ -74,6 +74,14 @@ class DatabaseExtension(BaseExtension):
     async def shutdown(self, app: FastAPI) -> None:
         if self.engine:
             await self.engine.dispose()
+
+    def middleware(self) -> list[Middleware]:
+        return [Middleware(DatabaseLoggingMiddleware, level=INFO)]
+
+    def register_cli(self, app_cli: click.Group) -> None:
+        @app_cli.command()
+        @click.option("--workers", default=1, type=int, help="Number of workers")
+        def blow_up_db(workers: int): ...
 ```
 
 For full control, override `register()` directly:
@@ -154,6 +162,8 @@ Base class with `startup()` and `shutdown()` hooks:
 
 - `startup(registry, app) -> dict[str, Any]`: Setup resources, return state
 - `shutdown(app) -> None`: Cleanup resources
+- `middleware() -> list[Middleware]`: Optional middleware to configure
+- `register_cli(group) -> None`: Optional hook to add click commands
 
 ### `Extension` Protocol
 
@@ -172,8 +182,7 @@ def register(self, registry: svcs.Registry, app: FastAPI) -> AsyncContextManager
 
 ## Why cuneus?
 
-- **Simple** — one function, `build_lifespan()`, does what you need
-- **No magic** — middleware added directly to FastAPI, not hidden
+- **Simple** — one function, `build_app()`, does what you need
 - **Testable** — registry exposed via `lifespan.registry`
 - **Composable** — extensions are just async context managers
 - **Built on svcs** — proper dependency injection, not global state

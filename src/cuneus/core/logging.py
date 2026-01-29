@@ -114,8 +114,8 @@ class LoggingMiddleware(BaseHTTPMiddleware):
     """
 
     def __init__(self, app: ASGIApp, header_name: str = "X-Request-ID") -> None:
-        self.app = app
         self.header_name = header_name
+        super().__init__(app)
 
     async def dispatch(
         self, request: Request, call_next: Callable[..., Awaitable[Response]]
