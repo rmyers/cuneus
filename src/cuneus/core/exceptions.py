@@ -4,11 +4,9 @@ Exception handling with consistent API responses.
 
 from __future__ import annotations
 
-from sys import exc_info
 from typing import Any
 
 import structlog
-import svcs
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
