@@ -16,19 +16,21 @@ Example:
 """
 
 from .core.application import build_app
-from .core.execptions import (
+from .core.exceptions import (
     AppException,
     BadRequest,
-    Unauthorized,
+    Conflict,
+    DatabaseError,
+    ErrorResponse,
+    ExceptionExtension,
+    ExternalServiceError,
     Forbidden,
     NotFound,
-    Conflict,
     RateLimited,
-    ServiceUnavailable,
-    DatabaseError,
     RedisError,
-    ExternalServiceError,
-    ExceptionExtension,
+    ServiceUnavailable,
+    Unauthorized,
+    error_responses,
 )
 from .core.extensions import BaseExtension, Extension
 from .core.settings import Settings
@@ -46,14 +48,16 @@ __all__ = [
     # Exceptions
     "AppException",
     "BadRequest",
-    "Unauthorized",
+    "Conflict",
+    "DatabaseError",
+    "ErrorResponse",
+    "ExceptionExtension",
+    "ExternalServiceError",
     "Forbidden",
     "NotFound",
-    "Conflict",
     "RateLimited",
-    "ServiceUnavailable",
-    "DatabaseError",
     "RedisError",
-    "ExternalServiceError",
-    "ExceptionExtension",
+    "ServiceUnavailable",
+    "Unauthorized",
+    "error_responses",
 ]

@@ -167,6 +167,7 @@ class ExceptionExtension(BaseExtension):
         self.settings = settings or Settings()
 
     async def startup(self, registry: svcs.Registry, app: FastAPI) -> dict[str, Any]:
+        log.info("Setting up exception handlers")
         app.add_exception_handler(AppException, self._handle_app_exception)  # type: ignore[arg-type]
         app.add_exception_handler(Exception, self._handle_unexpected_exception)
         return {}
@@ -174,12 +175,13 @@ class ExceptionExtension(BaseExtension):
     def _handle_app_exception(
         self, request: Request, exc: AppException
     ) -> JSONResponse:
+
         if exc.status_code >= 500 and self.settings.log_server_errors:
             log.exception("server_error", error_code=exc.error_code)
         else:
             log.warning("client_error", error_code=exc.error_code, message=exc.message)
 
-        response = exc.to_response(request.state.get("request_id", None))
+        response = exc.to_response(getattr(request.state, "request_id", None))
 
         headers = {}
         if isinstance(exc, RateLimited) and exc.retry_after:
