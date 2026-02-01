@@ -163,7 +163,6 @@ class ExceptionExtension(BaseExtension):
     def _handle_app_exception(
         self, request: Request, exc: AppException
     ) -> JSONResponse:
-        log.info("in handle app exception")
         if exc.status_code >= 500 and self.settings.log_server_errors:
             log.exception("server_error", error_code=exc.error_code)
         else:
