@@ -124,6 +124,10 @@ class TestExceptionExtension:
         async def raise_unexpected():
             raise RuntimeError("Boom")
 
+        @app.get("/server-error")
+        async def raise_server_error():
+            raise AppException("Boom")
+
         @app.get("/rate-limited")
         async def raise_rate_limited():
             raise RateLimited(retry_after=30)
@@ -159,6 +163,14 @@ class TestExceptionExtension:
         body = resp.json()
         assert body["error"]["details"]["exception"] == "RuntimeError"
         assert body["error"]["details"]["message"] == "Boom"
+
+    @pytest.mark.parametrize("app", [{"log_server_errors": True}], indirect=True)
+    def test_log_server_errors(self, client):
+        resp = client.get("/server-error")
+        assert resp.status_code == 500, resp.text
+        body = resp.json()
+        assert body["error"]["code"] == "internal_error"
+        assert body["error"]["message"] == "Boom"
 
     def test_rate_limited_includes_retry_after_header(self, client):
         resp = client.get("/rate-limited")

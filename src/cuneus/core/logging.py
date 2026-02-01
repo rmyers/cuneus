@@ -4,18 +4,17 @@ Structured logging with structlog and request context.
 
 from __future__ import annotations
 
-from contextvars import ContextVar
 import logging
 import time
 import uuid
-from typing import Any, Awaitable, Callable, MutableMapping
+from typing import Any, Awaitable, Callable
 
 import structlog
 import svcs
 from fastapi import FastAPI, Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware import Middleware
-from starlette.types import ASGIApp, Scope, Send, Receive
+from starlette.types import ASGIApp
 
 from .extensions import BaseExtension
 from .settings import Settings
@@ -38,7 +37,7 @@ def configure_structlog(settings: Settings | None = None) -> None:
     ]
 
     renderer: structlog.types.Processor = structlog.dev.ConsoleRenderer(colors=True)
-    if log_settings.log_json:
+    if log_settings.log_json:  # pragma: no cover
         renderer = structlog.processors.JSONRenderer()
 
     # Configure structlog
@@ -79,15 +78,6 @@ class LoggingExtension(BaseExtension):
 
     Integrates with stdlib logging so uvicorn and other libraries
     also output through structlog.
-
-    Usage:
-        from qtip import build_app
-        from qtip.middleware.logging import LoggingExtension, LoggingSettings
-
-        app = build_app(
-            settings,
-            extensions=[LoggingExtension(settings)],
-        )
     """
 
     def __init__(self, settings: Settings | None = None) -> None:
@@ -160,71 +150,3 @@ class LoggingMiddleware(BaseHTTPMiddleware):
             raise
         finally:
             structlog.contextvars.clear_contextvars()
-
-
-# Used by httpx for request ID propagation
-request_id_ctx: ContextVar[str | None] = ContextVar("request_id", default=None)
-
-
-class RequestIDMiddleware:
-    def __init__(self, app: ASGIApp, header_name: str = "X-Request-ID") -> None:
-        self.app = app
-        self.header_name = header_name
-
-    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http":
-            await self.app(scope, receive, send)
-            return
-
-        headers = dict(scope.get("headers", []))
-        request_id = headers.get(
-            self.header_name.lower().encode(), str(uuid.uuid4())[:8].encode()
-        ).decode()
-
-        if "state" not in scope:
-            scope["state"] = {}
-        scope["state"]["request_id"] = request_id
-
-        # Set contextvar for use in HTTP clients
-        token = request_id_ctx.set(request_id)
-
-        async def send_with_request_id(message: MutableMapping[str, Any]) -> None:
-            if message["type"] == "http.response.start":
-                headers = list(message.get("headers", []))
-                headers.append((self.header_name.encode(), request_id.encode()))
-                message["headers"] = headers
-            await send(message)
-
-        try:
-            await self.app(scope, receive, send_with_request_id)
-        finally:
-            request_id_ctx.reset(token)
-
-
-# === Public API ===
-
-
-def get_logger(**initial_context: Any) -> structlog.stdlib.BoundLogger:
-    """
-    Get a logger with optional initial context.
-
-    Usage:
-        log = get_logger()
-        log.info("user logged in", user_id=123)
-    """
-    log = structlog.stdlib.get_logger()
-    if initial_context:
-        log = log.bind(**initial_context)
-    return log
-
-
-def bind_contextvars(**context: Any) -> None:
-    """
-    Bind additional context that will appear in all subsequent logs.
-    """
-    structlog.contextvars.bind_contextvars(**context)
-
-
-def get_request_id(request: Request) -> str:
-    """Get request ID from request state."""
-    return getattr(request.state, "request_id", "-")

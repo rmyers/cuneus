@@ -191,7 +191,7 @@ class ExceptionExtension(BaseExtension):
             }
         }
 
-        if hasattr(request.state, "request_id"):
+        if hasattr(request.state, "request_id"):  # pragma: no branch
             response["error"]["request_id"] = request.state.request_id
 
         if self.settings.debug:
