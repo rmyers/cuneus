@@ -17,7 +17,7 @@ from fastapi import FastAPI
 from starlette.middleware import Middleware
 
 from .settings import Settings
-from .execptions import ExceptionExtension
+from .exceptions import ExceptionExtension
 from .logging import LoggingExtension
 from .extensions import Extension, HasCLI, HasMiddleware
 from ..ext.health import HealthExtension
@@ -26,31 +26,28 @@ logger = structlog.stdlib.get_logger("cuneus")
 
 type ExtensionInput = Extension | Callable[..., Extension]
 
-DEFAULT_EXTENSIONS = (
+DEFAULTS = (
     LoggingExtension,
     HealthExtension,
     ExceptionExtension,
 )
 
 
+class ExtensionConflictError(Exception):
+    """Raised when extensions have conflicting state keys."""
+
+    pass
+
+
 def _instantiate_extension(
     ext: ExtensionInput, settings: Settings | None = None
 ) -> Extension:
     if isinstance(ext, type) or callable(ext):
-        sig = inspect.signature(ext)
-
-        # Check if it accepts a 'settings' parameter
-        if "settings" in sig.parameters:
+        try:
             return ext(settings=settings)
+        except TypeError:
+            return ext()
 
-        # Check if it accepts **kwargs
-        has_var_keyword = any(
-            p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
-        )
-        if has_var_keyword:
-            return ext(settings=settings)
-
-        return ext()
     return ext
 
 
@@ -92,13 +89,7 @@ def build_app(
 
     settings = settings or Settings()
 
-    if include_defaults:
-        # Allow users to override a default extension
-        user_types = {type(ext) for ext in extensions}
-        defaults = [ext for ext in DEFAULT_EXTENSIONS if type(ext) not in user_types]
-        all_inputs = (*defaults, *extensions)
-    else:
-        all_inputs = extensions
+    all_inputs = (*DEFAULTS, *extensions) if include_defaults else extensions
 
     all_extensions = [_instantiate_extension(ext, settings) for ext in all_inputs]
 
@@ -117,10 +108,13 @@ def build_app(
             state: dict[str, Any] = {}
 
             for ext in all_extensions:
+                ext_name = ext.__class__.__name__
                 ext_state = await stack.enter_async_context(ext.register(registry, app))
                 if ext_state:
                     if overlap := state.keys() & ext_state.keys():
-                        raise ValueError(f"Extension state key collision: {overlap}")
+                        msg = f"Extension {ext_name} state key collision: {overlap}"
+                        logger.error(msg, ext=ext_name, overlap=overlap)
+                        raise ExtensionConflictError(msg).with_traceback(None) from None
                     state.update(ext_state)
 
             yield state

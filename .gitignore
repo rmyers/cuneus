@@ -5,7 +5,12 @@ build/
 dist/
 wheels/
 *.egg-info
+.*_cache
+
+# coverage
 .coverage
+htmlcov
+
 
 # Virtual environments
 .venv
