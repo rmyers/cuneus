@@ -4,6 +4,7 @@ Exception handling with consistent API responses.
 
 from __future__ import annotations
 
+from sys import exc_info
 from typing import Any
 
 import structlog
@@ -152,30 +153,19 @@ class ExceptionExtension(BaseExtension):
 
     Catches AppException subclasses and converts to JSON responses.
     Catches unexpected exceptions and returns generic 500s.
-
-    Usage:
-        from qtip import build_app
-        from qtip.core.exceptions import ExceptionExtension, ExceptionSettings
-
-        app = build_app(
-            settings,
-            extensions=[ExceptionExtension(settings)],
-        )
     """
 
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or Settings()
 
-    async def startup(self, registry: svcs.Registry, app: FastAPI) -> dict[str, Any]:
-        log.info("Setting up exception handlers")
+    def add_exception_handler(self, app: FastAPI) -> None:
         app.add_exception_handler(AppException, self._handle_app_exception)  # type: ignore[arg-type]
         app.add_exception_handler(Exception, self._handle_unexpected_exception)
-        return {}
 
     def _handle_app_exception(
         self, request: Request, exc: AppException
     ) -> JSONResponse:
-
+        log.info("in handle app exception")
         if exc.status_code >= 500 and self.settings.log_server_errors:
             log.exception("server_error", error_code=exc.error_code)
         else:
@@ -196,8 +186,7 @@ class ExceptionExtension(BaseExtension):
     def _handle_unexpected_exception(
         self, request: Request, exc: Exception
     ) -> JSONResponse:
-        log.exception("unexpected_error")
-
+        log.exception("unexpected_error", exc_info=exc)
         response: dict[str, Any] = {
             "error": {
                 "code": "internal_error",

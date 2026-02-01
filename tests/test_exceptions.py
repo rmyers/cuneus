@@ -111,8 +111,10 @@ class TestErrorResponses:
 
 class TestExceptionExtension:
     @pytest.fixture
-    def app(self):
-        app, _ = build_app()
+    def app(self, request):
+        params = getattr(request, "param", {})
+        settings = Settings(**params)
+        app, _ = build_app(settings=settings)
 
         @app.get("/app-error")
         async def raise_app_error():
@@ -130,36 +132,35 @@ class TestExceptionExtension:
 
     @pytest.fixture
     def client(self, app):
-
         with TestClient(app, raise_server_exceptions=False) as client:
-            print(app.exception_handlers)
-            print({type(k): k for k in app.exception_handlers.keys()})
             yield client
 
     def test_handles_app_exception(self, client):
         resp = client.get("/app-error")
-        assert resp.status_code == 404
+        assert resp.status_code == 404, resp.text
         body = resp.json()
         assert body["error"]["code"] == "not_found"
         assert body["error"]["message"] == "Item not found"
         assert body["error"]["details"] == {"id": 123}
 
+    @pytest.mark.parametrize("app", [{"debug": False}], indirect=True)
     def test_handles_unexpected_exception(self, client):
         resp = client.get("/unexpected")
-        assert resp.status_code == 500
+        assert resp.status_code == 500, resp.text
         body = resp.json()
         assert body["error"]["code"] == "internal_error"
         assert body["error"]["message"] == "An unexpected error occurred"
         assert "details" not in body["error"]
 
+    @pytest.mark.parametrize("app", [{"debug": True}], indirect=True)
     def test_debug_mode_includes_exception_details(self, client):
         resp = client.get("/unexpected")
-        assert resp.status_code == 500
+        assert resp.status_code == 500, resp.text
         body = resp.json()
         assert body["error"]["details"]["exception"] == "RuntimeError"
         assert body["error"]["details"]["message"] == "Boom"
 
     def test_rate_limited_includes_retry_after_header(self, client):
         resp = client.get("/rate-limited")
-        assert resp.status_code == 429
+        assert resp.status_code == 429, resp.text
         assert resp.headers["Retry-After"] == "30"

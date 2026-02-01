@@ -60,6 +60,13 @@ class HasCLI(Protocol):
     def register_cli(self, cli_group: Group) -> None: ...
 
 
+@runtime_checkable
+class HasExceptionHandler(Protocol):
+    """Extension that provides exception handlers."""
+
+    def add_exception_handler(self, app: FastAPI) -> None: ...
+
+
 class BaseExtension:
     """
     Base class for extensions with explicit startup/shutdown hooks.

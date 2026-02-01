@@ -25,7 +25,7 @@ help: ## Help is on the way
 	@grep '^[a-zA-Z]' $(MAKEFILE_LIST) | awk -F ':.*?## ' 'NF==2 {printf "   %-20s%s\n", $$1, $$2}' | sort
 
 # export env vars in order to be used in commands
-export PYTHONPATH ?= ./
+export PYTHONPATH ?= ./src
 
 # uv creates the venv automatically, but this tracks if sync has been run
 $(MARKER): $(PYPROJECT) $(UV_LOCK)

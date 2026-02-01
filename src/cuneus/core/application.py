@@ -19,7 +19,7 @@ from starlette.middleware import Middleware
 from .settings import Settings
 from .exceptions import ExceptionExtension
 from .logging import LoggingExtension
-from .extensions import Extension, HasCLI, HasMiddleware
+from .extensions import Extension, HasCLI, HasExceptionHandler, HasMiddleware
 from ..ext.health import HealthExtension
 
 logger = structlog.stdlib.get_logger("cuneus")
@@ -123,12 +123,21 @@ def build_app(
     middleware: list[Middleware] = []
 
     for ext in all_extensions:
+        ext_name = ext.__class__.__name__
         if isinstance(ext, HasMiddleware):
-            logger.debug(f"Loading middleware from {ext.__class__.__name__}")
+            logger.debug(f"Loading middleware from {ext_name}")
             middleware.extend(ext.middleware())
         if isinstance(ext, HasCLI):
-            logger.debug(f"Adding cli commands from {ext.__class__.__name__}")
+            logger.debug(f"Adding cli commands from {ext_name}")
             ext.register_cli(app_cli)
 
     app = FastAPI(lifespan=lifespan, middleware=middleware, **fastapi_kwargs)
+
+    # Preform post app initialization extension customization
+    for ext in all_extensions:
+        ext_name = ext.__class__.__name__
+        if isinstance(ext, HasExceptionHandler):
+            logger.debug(f"Loading exception handlers from {ext_name}")
+            ext.add_exception_handler(app)
+
     return app, app_cli
